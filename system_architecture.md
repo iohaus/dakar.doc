@@ -36,7 +36,7 @@ the paper could be fixed before the code exists to contradict it. The changes:
 5. **Event-log honesty.** The design is *event-logged with a replay audit*,
    co-committed in one transaction — not event-sourced in the
    rebuild-from-log sense (§3, §7).
-6. **Schema:** `quote_expires_at`, `payment_due_at`, event-supplied `fired_at`
+6. **Schema:** `quote_expires_at`, `payment_due_at`, event-supplied `occurred_at`
    (replay determinism), assignment-uniqueness index (INV-5 in the storage
    layer), `decision_trace` (§6).
 7. **Rubinstein bargaining** downgraded from "formal frame" to vocabulary; the
@@ -47,6 +47,18 @@ the paper could be fixed before the code exists to contradict it. The changes:
    the proofs surfaced one more liveness hole — a loaded truck that breaks
    down permanently had no exit from `EnRouteLoaded` — closed by back-porting
    `TransferCargo` and `AbortLoaded` (👤) from model.md §4.3 into §4.4 here.
+9. *(v0.2.1)* **The vocabulary firewall** (internals Law 4). This document
+   set is privileged; the `dakar` repository is not. Specification vocabulary
+   (token, place, marking, net, transition, firing, guard, binding, saga…)
+   never appears in code symbols, schema identifiers, code comments, or
+   anything else in the repository, and code never references `dakar.doc`.
+   Code and schema speak freight operations only: `Truck`, `Delivery`,
+   `TruckStatus`/`DeliveryStatus`, `DispatchBoard`, `FreightDesk`, `Action`,
+   `operations_journal`, `RefusalReason`. Traceability is one-way: the docs
+   cite code (model.md §12); ArchUnit enforces the symbol ban. All schema and
+   API prescriptions in this document now use the operational identifiers;
+   the formal prose (this document's own use of CPN language) is unaffected —
+   it never leaves this directory.
 
 ---
 
@@ -171,7 +183,7 @@ process was never scheduled).
 
 **MI-2 — Every state change is event-logged, atomically, with a replay
 audit.** Every *net-state* change — places, assignments, prices, flags — is a
-firing that writes an immutable `transition_firing` row *in the same
+firing that writes an immutable `operations_journal` row *in the same
 serializable transaction* as the marking change (§7), so the log can never
 disagree with the marking. (Telemetry attributes — truck position, driver
 hours — are environment-owned *measurements*, updated by the telemetry
@@ -189,8 +201,8 @@ four memory kinds, each with named tables (§6), before writing agent logic:
 
 | Memory kind | Contents | Backing |
 |---|---|---|
-| **Working** | live marking: truck & delivery token states | `truck_token`, `delivery_token` |
-| **Episodic** | firings, negotiation transcripts, disruption records, agent decision traces | `transition_firing`, `negotiation_episode`, `decision_trace` + vector index |
+| **Working** | live marking: truck & delivery token states | `truck`, `delivery` |
+| **Episodic** | firings, negotiation transcripts, disruption records, agent decision traces | `operations_journal`, `negotiation_episode`, `decision_trace` + vector index |
 | **Semantic** | distilled client profiles, lane statistics | `client_profile`, `lane_stat` |
 | **Procedural** | versioned guardrails: price floors, capacity rules, autonomy thresholds, loop bounds | `policy` (data, not code) |
 
@@ -382,7 +394,7 @@ every build. These are the properties we assert and verify:
   (`Offload`, `ReleaseTruck`, `Cancel`, `QuoteExpired`) move the delivery out
   of active places. Enforced three ways, deliberately redundant: the guard
   (domain), `SERIALIZABLE` isolation (transaction), and a partial `UNIQUE`
-  index on `truck_token.assigned_delivery` (storage — §6.1), so even a buggy
+  index on `truck.assigned_delivery` (storage — §6.1), so even a buggy
   adapter cannot persist a violation. **No double-booking is this invariant**,
   not INV-1.
 
@@ -431,28 +443,30 @@ between what the agent remembers and what the business committed).
 ### 6.1 Working memory — the marking
 
 ```sql
--- Truck tokens: exactly one row per physical truck; `place` is its CPN place.
-CREATE TABLE truck_token (
+-- One row per physical truck; `status` is its operational status.
+-- (Identifiers are operational vocabulary only — the migrations live in the
+--  public repo; the spec↔schema mapping is model.md §12. Law 4, internals §3.)
+CREATE TABLE truck (
   truck_id            UUID PRIMARY KEY,
-  place               STRING NOT NULL,          -- Garage | EnRouteEmpty | ...
+  status              STRING NOT NULL,          -- GARAGE | EN_ROUTE_EMPTY | ...
   capacity_tons       DECIMAL NOT NULL,
   position            GEOGRAPHY(POINT) NOT NULL,
   driver_hours_rem    DECIMAL NOT NULL,
   maintenance_due_at  TIMESTAMPTZ,
   assigned_delivery   UUID,                     -- null unless claimed
-  version             INT8 NOT NULL DEFAULT 1,  -- optimistic guard
+  version             INT8 NOT NULL DEFAULT 1,  -- optimistic concurrency
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- INV-5 in the storage layer: a delivery can be assigned to at most one truck,
--- even if a (buggy) adapter bypasses the domain guard.
+-- even if a (buggy) adapter bypasses the domain rule check.
 CREATE UNIQUE INDEX truck_single_assignment
-  ON truck_token (assigned_delivery)
+  ON truck (assigned_delivery)
   WHERE assigned_delivery IS NOT NULL;
 
-CREATE TABLE delivery_token (
+CREATE TABLE delivery (
   delivery_id         UUID PRIMARY KEY,
-  place               STRING NOT NULL,          -- Requested | Matched | ...
+  status              STRING NOT NULL,          -- REQUESTED | MATCHED | ...
   client_id           UUID NOT NULL,
   tonnage             DECIMAL NOT NULL,
   origin              GEOGRAPHY(POINT) NOT NULL,
@@ -472,23 +486,25 @@ CREATE TABLE delivery_token (
 ### 6.2 Episodic memory — event log, decision traces, negotiation transcripts
 
 ```sql
--- Append-only log of every transition firing. This IS the episodic memory.
-CREATE TABLE transition_firing (
-  firing_id     UUID PRIMARY KEY,               -- supplied by the domain event (IdSource)
-  transition    STRING NOT NULL,                -- ClaimTruck | Quote | ...
-  binding       JSONB NOT NULL,                 -- versioned serialization of the typed Transition
-  actor         STRING NOT NULL,                -- dispatcher | negotiator | saga | staff
+-- Append-only journal of every executed action. This IS the episodic memory.
+CREATE TABLE operations_journal (
+  entry_id      UUID PRIMARY KEY,               -- supplied by the domain event (IdSource)
+  action        STRING NOT NULL,                -- ClaimTruck | Quote | ...
+  payload       JSONB NOT NULL,                 -- versioned serialization of the typed
+                                                -- Action arguments + Evidence (the facts
+                                                -- the rules consulted — replay closure)
+  actor         STRING NOT NULL,                -- dispatcher | negotiator | coordinator | staff
   delivery_id   UUID,
   truck_id      UUID,
-  fired_at      TIMESTAMPTZ NOT NULL,           -- = snapshot.now() from the event: replay-deterministic (v0.2)
+  occurred_at   TIMESTAMPTZ NOT NULL,           -- = snapshot.now() from the event: replay-deterministic (v0.2)
   recorded_at   TIMESTAMPTZ NOT NULL DEFAULT now(),  -- ingest time, observability only
-  INDEX (delivery_id, fired_at),
-  INDEX (truck_id, fired_at)
+  INDEX (delivery_id, occurred_at),
+  INDEX (truck_id, occurred_at)
 );
 ```
 
-*(v0.2: `fired_at` is supplied by the domain event — internals §10 — not
-defaulted to `now()`. A database-clock default would make `Replay.fold`
+*(v0.2: `occurred_at` is supplied by the domain event — internals §10 — not
+defaulted to `now()`. A database-clock default would make `Journal.replay`
 equality unachievable; the ingest timestamp lives separately in `recorded_at`.)*
 
 ```sql
@@ -496,13 +512,13 @@ equality unachievable; the ingest timestamp lives separately in `recorded_at`.)*
 -- model's rationale for one decision episode. Episodic memory of *how* the
 -- agent decided, not just what it did; feeds audit and future retrieval.
 CREATE TABLE decision_trace (
-  trace_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  actor         STRING NOT NULL,                -- dispatcher | negotiator | saga
-  firing_id     UUID,                           -- null if the episode ended without a firing
-  snapshot_ts   TIMESTAMPTZ NOT NULL,           -- the AS OF SYSTEM TIME all perception used (§8.2)
-  trace         JSONB NOT NULL,                 -- ordered tool calls + results + rationale
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  INDEX (firing_id)
+  trace_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  actor            STRING NOT NULL,             -- dispatcher | negotiator | coordinator
+  journal_entry_id UUID,                        -- null if the episode ended without an action
+  snapshot_ts      TIMESTAMPTZ NOT NULL,        -- the AS OF SYSTEM TIME all perception used (§8.2)
+  trace            JSONB NOT NULL,              -- ordered tool calls + results + rationale
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  INDEX (journal_entry_id)
 );
 
 -- Negotiation episodes with embeddings for semantic recall of "deals like this".
@@ -577,30 +593,30 @@ Shape of a firing (illustrated with `ClaimTruck`):
 ```
 BEGIN;  -- SERIALIZABLE (CockroachDB default)
 
-  -- 1. Read input tokens (working memory).
-  SELECT * FROM truck_token    WHERE truck_id    = $truck    FOR UPDATE;
-  SELECT * FROM delivery_token WHERE delivery_id = $delivery FOR UPDATE;
+  -- 1. Read the records the action touches (working memory).
+  SELECT * FROM truck    WHERE truck_id    = $truck    FOR UPDATE;
+  SELECT * FROM delivery WHERE delivery_id = $delivery FOR UPDATE;
 
-  -- 2. Evaluate the guard G(ClaimTruck) in the domain core:
+  -- 2. Re-check the ClaimTruck business rules in the domain core:
   --    capacity ≥ tonnage ∧ driverHoursRem ≥ estDriveHours ∧ unassigned.
-  --    If false → ROLLBACK (transition was not enabled).
+  --    If refused → ROLLBACK (nothing to execute).
 
-  -- 3. Consume/produce tokens (the arc effect E). The expectedVersion values
-  --    come from the FiringPlan (computed from an earlier snapshot), which is
-  --    why the version predicate is load-bearing, not decorative.
-  UPDATE delivery_token
-     SET place='Matched', version=version+1, updated_at=now()
+  -- 3. Apply the state writes. The expectedVersion values come from the
+  --    ActionPlan (computed from an earlier snapshot), which is why the
+  --    version predicate is load-bearing, not decorative.
+  UPDATE delivery
+     SET status='MATCHED', version=version+1, updated_at=now()
    WHERE delivery_id=$delivery AND version=$expectedVersion;
-  UPDATE truck_token
+  UPDATE truck
      SET assigned_delivery=$delivery, version=version+1
    WHERE truck_id=$truck AND version=$expectedVersion;
 
-  -- 4. Append the firing to the episodic log (MI-2). fired_at comes from the
-  --    event, not now().
-  INSERT INTO transition_firing(firing_id, transition, binding, actor,
-                                delivery_id, truck_id, fired_at)
-       VALUES ($firingId, 'ClaimTruck', $binding, 'dispatcher',
-               $delivery, $truck, $firedAt);
+  -- 4. Append the journal entry (MI-2). occurred_at comes from the event,
+  --    not now().
+  INSERT INTO operations_journal(entry_id, action, payload, actor,
+                                 delivery_id, truck_id, occurred_at)
+       VALUES ($entryId, 'ClaimTruck', $payload, 'dispatcher',
+               $delivery, $truck, $occurredAt);
 
 COMMIT;
 ```
@@ -680,7 +696,7 @@ audit, with the honest boundary of each claim stated next to it:
 |---|---|---|
 | Dispatcher | **Fully autonomous** — fires `ClaimTruck` without human approval | Pre-load claims are reversible (`Cancel`); the guard + INV-5 bound the blast radius |
 | Saga driver | **Autonomous within policy** — fires physical transitions on signals; chooses disruption responses itself | Escalates to staff when a response's estimated cost exceeds `saga_escalation_threshold` (procedural memory) |
-| Negotiator | **Draft + human approval** | Client-facing financial commitment; the gate is removed post-MVP only when guard-rejection and policy-violation rates are demonstrably boring (backlog, Post-MVP) |
+| Negotiator | **Draft + human approval** | Client-facing financial commitment; the gate is removed post-MVP only when rule-refusal and policy-violation rates are demonstrably boring (backlog, Post-MVP) |
 
 At least one agent is fully autonomous end-to-end from the first release —
 otherwise this would be a recommender system with an agent-shaped vocabulary.
@@ -700,11 +716,11 @@ the domain core's purity laws are untouched.
 from the typed transition record (`claim_truck(truck_id, delivery_id)`,
 `quote(delivery_id, offer)`, …). Executing an action tool call means: the shell
 converts the call into a typed `Transition`, asks the domain to plan it
-(`DakarNet.plan` — which re-evaluates the guard), and executes the resulting
-`FiringPlan` as the §7 transaction. Consequences:
+(`FreightDesk.plan` — which re-evaluates the guard), and executes the resulting
+`ActionPlan` as the §7 transaction. Consequences:
 
 - A call to a **disabled transition** returns a typed tool error carrying the
-  `GuardReason`s to the model, which may re-deliberate; after
+  `RefusalReason`s to the model, which may re-deliberate; after
   `max_action_attempts` (procedural memory) the episode ends with a typed
   no-action outcome. The error path is a *first-class percept*, not an
   exception.
@@ -718,7 +734,7 @@ net transitions; the database is the tool executor; an illegal tool call cannot
 commit.* This is "the LLM proposes, the formalism disposes" visible in the API
 traces, not just in this document.
 
-**Perception tools.** Read-only, per-role: `list_enabled_claims()`,
+**Perception tools.** Read-only, per-role: `list_claim_candidates()`,
 `search_similar_negotiations(query)` (vector index), `get_client_profile(id)`,
 `get_lane_stat(lane)`, `get_route_estimate(from, to)`. Two rules make them
 safe and reproducible:
@@ -749,7 +765,7 @@ Replaces the heuristic "find an idle truck with enough capacity." Reasons over
 the fleet's **near-future** state, not just its current one: a truck that is
 `EnRouteEmpty` 50 km from origin can beat an idle `Garage` truck 200 km away.
 
-- **Perception:** `list_enabled_claims()` — every guard-enabled truck→delivery
+- **Perception:** `list_claim_candidates()` — every guard-enabled truck→delivery
   pair, annotated with repositioning distance, driver-hours slack, maintenance
   window; `get_lane_stat` for backhaul potential at the destination.
 - **Problem frame:** min-cost assignment over feasible pairs (objective in
@@ -817,7 +833,7 @@ same episodic memory future disruptions will be resolved against.
   the database row.
 
 All are deliberately out of MVP scope; their presence in the schema (the
-`transition_firing`, `decision_trace`, and vector layers already carry the
+`operations_journal`, `decision_trace`, and vector layers already carry the
 needed data) is evidence the memory design generalizes.
 
 ---
@@ -842,6 +858,11 @@ Rules that keep the abstraction honest:
 
 - The words *agent*, *saga*, *transition*, *token*, *embedding*, *marking*,
   *tool* never appear in any API response, UI string, or client communication.
+- One layer down, the same discipline applies to the repository itself: the
+  formal vocabulary never appears in code, schema, or code comments, and code
+  never references this document set (the vocabulary firewall — internals
+  Law 4, revision note item 9). There are therefore **two** firewalls: spec →
+  code (Law 4) and code-internal → product (this section).
 - Staff see **recommendations, not machinery**: "Suggested truck: DK-114 (saves
   62 km repositioning)" with approve/override — operations language, not
   dispatch-algorithm language. The decision trace backs the recommendation for
@@ -906,7 +927,7 @@ tool inventory (§8.2) — capability and permission are the same list:
 
 | Principal | Grants (= action + perception tools) |
 |---|---|
-| Dispatcher | `SELECT` on trucks/deliveries/lane_stat; `UPDATE` for `ClaimTruck`; `INSERT` on `transition_firing`, `decision_trace` |
+| Dispatcher | `SELECT` on trucks/deliveries/lane_stat; `UPDATE` for `ClaimTruck`; `INSERT` on `operations_journal`, `decision_trace` |
 | Negotiator | `SELECT` on episodes/profiles/lanes/policy; `UPDATE` for `Quote`; `INSERT` on episodes/firings/traces |
 | Saga driver | `UPDATE` for physical transitions; `INSERT` on firings/traces |
 | Product API | `INSERT` Requested tokens; `SELECT` on marking projection (follower reads) |
@@ -919,11 +940,11 @@ windows — the "memory that never goes down" requirement. Because agents are
 crash-only (MI-1) and firing is atomic (§7), a Lambda dying mid-decision leaves
 no partial state; the work is simply re-driven.
 
-**Observability.** Every state change is already a `transition_firing` row and
+**Observability.** Every state change is already an `operations_journal` row and
 every agent decision a `decision_trace` row, so the audit trail and the
 operational log are the same artifact. MCP audit logging covers all operator
 introspection. Metrics: firing rate per transition, `40001` retry rate
-(contention pressure), guard-rejection rate per agent (a spike in Negotiator
+(contention pressure), rule-refusal rate per agent (a spike in Negotiator
 floor rejections is an early signal of a misbehaving model or a bad cost
 model), tool-call rate and deliberation-loop length per agent (cost and
 model-health signal), time-in-place for `Disputed` (staff-queue health, the F2

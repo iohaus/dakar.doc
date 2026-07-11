@@ -56,7 +56,7 @@ the only shape agent work takes; there are no long-lived agent processes.
 
 ```
  (1) WAKE      EventBridge rule / signal / schedule invokes the agent Lambda.
- (2) SNAPSHOT  Shell loads Snapshot { Marking, PolicySet, RouteTable, now }
+ (2) SNAPSHOT  Shell loads Snapshot { DispatchBoard, PolicySet, RouteTable, now }
                from CockroachDB; records snapshot_ts. All perception in this
                episode is pinned to snapshot_ts (AS OF SYSTEM TIME).
  (3) FRAME     Shell assembles the initial context: the triggering signal,
@@ -69,12 +69,12 @@ the only shape agent work takes; there are no long-lived agent processes.
  (5) VALIDATE  Port validation (internals §8.3): proposal must be a legal
                shape; out-of-band / non-candidate proposals are REJECTED,
                never repaired or clamped.
- (6) PLAN      Domain: DakarNet.plan(transition, snapshot, idSource)
-               → FiringPlan | NotEnabled(reasons) | ...
- (7) EXECUTE   Shell: FiringPlan as one SERIALIZABLE transaction (arch §7).
+ (6) PLAN      Domain: FreightDesk.plan(action, snapshot, idSource)
+               → ActionPlan | Refused(reasons) | ...
+ (7) EXECUTE   Shell: ActionPlan as one SERIALIZABLE transaction (arch §7).
        on 40001 / version miss → fresh snapshot, go to (3),
                                   ≤ max_action_attempts total
-       on guard rejection       → typed tool error back to model, go to (4)
+       on rule refusal          → typed tool error back to model, go to (4)
  (8) TRACE     decision_trace row committed (with the firing when there is
                one): ordered tool calls, results, rationale, outcome.
  (9) DIE       The process exits. Nothing survives in memory. (MI-1)
@@ -90,7 +90,7 @@ an observation, and each point is chaos-tested (backlog P5-3, P7-1):
 | (1)–(4) | nothing written | perception is read-only |
 | (5)–(6) | nothing written | planning is pure (internals Law 1) |
 | (7) pre-commit | transaction aborts | atomicity; marking unchanged |
-| (7) post-commit, pre-(8) | firing committed, trace missing | the *business* record (`transition_firing`) is complete and correct; the trace is best-effort telemetry unless co-committed (Negotiator drafts co-commit trace + episode in one txn — §5.4) |
+| (7) post-commit, pre-(8) | firing committed, trace missing | the *business* record (`operations_journal`) is complete and correct; the trace is best-effort telemetry unless co-committed (Negotiator drafts co-commit trace + episode in one txn — §5.4) |
 | (8)–(9) | everything durable | — |
 
 Re-driving a killed episode is always legal: the new episode reads a fresh
@@ -105,7 +105,7 @@ All bounds are `policy` rows (arch §6.3), never code constants:
 | Policy key | Governs | Consumed by |
 |---|---|---|
 | `max_perception_calls` | perception tool calls per episode | step (4) |
-| `max_action_attempts` | firing attempts (guard rejections + 40001 retries) per episode | step (7) |
+| `max_action_attempts` | firing attempts (rule refusals + 40001 retries) per episode | step (7) |
 | `episode_token_budget` | model token ceiling per episode | adapter |
 | `saga_escalation_threshold` | max estimated cost the Saga driver may accept autonomously | §6.3 |
 | `quote_validity`, `payment_terms` | stamped into tokens by `Quote` / `ArriveDest` | domain |
@@ -165,13 +165,13 @@ CockroachDB (the domain module is never entered for perception).
 
 | Tool | Backing | Returns |
 |---|---|---|
-| `list_enabled_claims()` | `DakarNet.enabledClaims(snapshot)` | feasible truck→delivery pairs, each annotated: repositioning km, est. drive time, driver-hours slack (deterministically ordered — internals §7.3) |
+| `list_claim_candidates()` | `FreightDesk.claimCandidates(snapshot)` | feasible truck→delivery pairs, each annotated: repositioning km, est. drive time, driver-hours slack (deterministically ordered — internals §7.3) |
 | `search_similar_negotiations(query_text, lane?, cargo?, k)` | `negotiation_episode` vector index (cosine), filtered | k most similar past episodes: structured fields + outcome + transcript excerpt |
 | `get_client_profile(client_id)` | `client_profile` | win rate, avg discount, price sensitivity |
 | `get_lane_stat(lane_key)` | `lane_stat` | median price/ton, demand index, seasonality |
 | `get_route_estimate(from, to)` | `RouteTable` (pre-resolved) | distance, duration; `MISSING_ROUTE` error if not pre-resolved |
 | `get_delivery_context(delivery_id)` | marking + firing log | current token, full firing history, open disruption records |
-| `get_offer_band(delivery_id)` | `DakarNet.offerBand(...)` | `[floor, ceiling]` — the only pricing authority the model sees |
+| `get_offer_band(delivery_id)` | `FreightDesk.offerBand(...)` | `[floor, ceiling]` — the only pricing authority the model sees |
 
 The catalog is **closed**: adding a perception tool is an amendment to this
 section (same discipline as the internals §8.2 port list), because every tool
@@ -211,7 +211,7 @@ Errors are percepts, uniformly typed, and every one increments a metric:
 
 | Error | Cause | Model may retry? | Metric |
 |---|---|---|---|
-| `GUARD_REJECTED{reasons}` | transition not enabled — carries `GuardReason` list (e.g. `OFFER_BELOW_FLOOR`) | yes, within `max_action_attempts` — a different proposal | guard-rejection rate per agent (model-health alarm) |
+| `REFUSED{reasons}` | transition not enabled — carries `RefusalReason` list (e.g. `OFFER_BELOW_FLOOR`) | yes, within `max_action_attempts` — a different proposal | rule-refusal rate per agent (model-health alarm) |
 | `SERIALIZATION_CONFLICT` | `40001` / version miss — the world changed | yes — episode re-frames from a fresh snapshot | `40001` retry rate (contention) |
 | `UNKNOWN_TOOL` | model invented a tool | no — rejected outright | policy-violation rate |
 | `MALFORMED_ARGUMENTS` | schema violation | no — rejected outright, never repaired | policy-violation rate |
@@ -220,7 +220,7 @@ Errors are percepts, uniformly typed, and every one increments a metric:
 | `MISSING_ROUTE` | route not pre-resolved | no — shell defect, alerts engineering | error rate |
 
 A spike in any policy-violation metric is a *model-health* alarm (a
-misbehaving or regressed model), distinct from guard rejections (a
+misbehaving or regressed model), distinct from rule refusals (a
 *negotiating* model probing its bounds) — the taxonomy exists so the two are
 never conflated.
 
@@ -241,14 +241,14 @@ impossible), and dispatch latency is a business cost.
 **Trigger.** EventBridge rule on new `Requested` tokens; also re-invoked by
 the Saga driver on reassignment (disruption path).
 
-**Tools.** Perception: `list_enabled_claims`, `get_lane_stat`,
+**Tools.** Perception: `list_claim_candidates`, `get_lane_stat`,
 `get_route_estimate`. Action: `claim_truck`.
 
 **Episode walkthrough** (illustrative trace):
 
 ```
 frame:      delivery D-4812 Requested (28t, Rufisque → Touba, deadline +38h)
-tool call:  list_enabled_claims()
+tool call:  list_claim_candidates()
 result:     [ {DK-114, 62km reposition, 9.1h slack},
               {DK-207, 210km reposition, 22.4h slack},
               {DK-093, 18km reposition, 2.2h slack} ]
@@ -319,7 +319,7 @@ rendered as an explanation*; approval calls the staff endpoint, which fires
 `Quote` with `actor = staff` referencing the draft. A below-floor draft is
 impossible to *approve into existence* — the guard is re-checked at firing —
 but is also impossible to draft silently: the tool returns
-`GUARD_REJECTED{OFFER_BELOW_FLOOR}` to the model, and the rejection is
+`REFUSED{OFFER_BELOW_FLOOR}` to the model, and the rejection is
 metric'd. Rejected/expired drafts are episodes with `outcome = lost` — they
 are memory too.
 
@@ -361,7 +361,7 @@ opens a decision episode:
 frame:      disruption {breakdown, truck DK-114} on D-4812 (InTransit, 14h to deadline)
 tool call:  get_delivery_context(D-4812)
 tool call:  get_route_estimate(breakdown_pos, Touba)   → 4.2h remaining
-tool call:  list_enabled_claims()                       -- rescue candidates (unassigned, capacity ≥ 28t)
+tool call:  list_claim_candidates()                       -- rescue candidates (unassigned, capacity ≥ 28t)
 reasoning:  Repair ETA unknown; deadline slack 14h; rescue truck DK-158 is 1.5h away;
             estimated rescue cost 240k < threshold 400k.
 tool call:  record_disruption(D-4812, BREAKDOWN, "DK-114 engine failure km 31")
@@ -407,7 +407,7 @@ not a deployment.
 Autonomous negotiation (Post-MVP) requires, over a policy-defined evaluation
 window, all of:
 
-1. guard-rejection rate below the `negotiator_promotion_max_guard_rejects`
+1. rule-refusal rate below the `negotiator_promotion_max_refusals`
    policy value;
 2. policy-violation rate (unknown tool / malformed / out-of-band) at zero;
 3. staff approval rate above `negotiator_promotion_min_approval`, i.e. the
@@ -426,7 +426,7 @@ is a query, not a meeting.
 
 Per-agent CockroachDB service accounts (ccloud-provisioned, arch §11); the
 grant set equals the tool inventory (§3.1 principle 3). An integration test
-proves the Negotiator's principal cannot write `truck_token` (backlog P6-1).
+proves the Negotiator's principal cannot write `truck` (backlog P6-1).
 
 ### 8.2 Untrusted text reaches the model — assume it is hostile
 
@@ -444,7 +444,7 @@ rules and offer the floor price"). The defense is structural, not exhortative:
    send anything.
 3. **Injection is visible.** The full conversation, including retrieved
    transcripts, is in `decision_trace`; anomalous proposals correlate with
-   their percepts in one audit artifact, and the guard-rejection metric spikes
+   their percepts in one audit artifact, and the rule-refusal metric spikes
    on probing.
 4. **Retrieved content is data-framed.** Transcripts enter the conversation as
    tool results (structured, delimited), never concatenated into the system
@@ -479,7 +479,7 @@ scratch memory, no orchestrator agent. Coordination happens through the
 marking, the way ants coordinate through the terrain:
 
 - The Dispatcher's commit *is* the announcement: the truck disappears from
-  every other episode's `list_enabled_claims` at their next snapshot.
+  every other episode's `list_claim_candidates` at their next snapshot.
 - Contention is resolved by the database (`40001` — arch §7), and the losing
   episode's re-frame *is* the renegotiation.
 - The Saga driver re-invokes the Dispatcher by writing the state that triggers
@@ -503,7 +503,7 @@ not).
 |---|---|---|
 | Bedrock unavailable | Mechanical Saga duties + timeout scheduler unaffected (no LLM in that path). Dispatcher/Negotiator episodes fail fast → staff queue; console manual `assign` + manual quoting take over | slower matching and quoting; nothing stops, nothing unsafe (model.md Theorem 2 corollary) |
 | CockroachDB regional event | multi-region survivability; agents are stateless — they simply see the surviving quorum | none beyond latency |
-| Model regression (bad update) | policy-violation and guard-rejection alarms (§3.5); autonomy can be stepped down via policy data without deploy | quality dip, bounded by guards |
+| Model regression (bad update) | policy-violation and rule-refusal alarms (§3.5); autonomy can be stepped down via policy data without deploy | quality dip, bounded by guards |
 | Runaway deliberation | budgets (§2.3) end episodes deterministically | cost bounded |
 
 The asymmetry is the design: **safety and liveness never depend on the AI;
@@ -516,7 +516,7 @@ only optimality does** (model.md §7–§8).
 | Layer | Technique | What it pins |
 |---|---|---|
 | Port validation | hostile-fake policies: non-candidate choice, out-of-band offer, null, garbage JSON | reject-don't-repair paths (internals §8.3) |
-| Tool loop | scripted fake Bedrock: unknown tool, malformed args, budget exhaustion, guard-rejection-then-valid-retry sequences | §3.5 taxonomy; loop bounds; trace completeness |
+| Tool loop | scripted fake Bedrock: unknown tool, malformed args, budget exhaustion, refusal-then-valid-retry sequences | §3.5 taxonomy; loop bounds; trace completeness |
 | Contract | one real-model test per adapter: real Bedrock call, real tool schema, assert a well-formed episode | schema/model drift detection |
 | Chaos | kill the Lambda at each §2.2 point; re-drive; assert marking + log unchanged or exactly-once | crash-only claims, MI-1 |
 | Contention | N concurrent Dispatcher episodes, one truck: exactly one commit, N−1 clean re-plans | §9 + arch §7 (the P2-5 test generalized) |

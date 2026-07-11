@@ -127,7 +127,7 @@ M = ( K : KID ⇀ Truck,  D : DID ⇀ Delivery )
 
 subject to the **key–identity condition**: `K(κ).id = κ` and `D(δ).id = δ`
 for all keys. We write `k ∈ M` for `k ∈ ran(K)`, `place_M(k)` for the place of
-`k` in `M`, etc. This is exactly the shipped Java `Marking` record (internals
+`k` in `M`, etc. This is exactly the shipped Java `DispatchBoard` record (internals
 §5.3), which enforces the key–identity condition and duplicate rejection in
 its constructor.
 
@@ -147,8 +147,9 @@ inspection of every transition in §4 shows each consumes and produces tokens
 with preserved, never-duplicated ids. ∎
 
 The practical weight of Theorem 1: **the relational schema (one row per token,
-`place` as a column — system_architecture.md §6.1) is not an approximation of
-the net; it is an exact representation of its reachable fragment.**
+the place as the `status` column — system_architecture.md §6.1) is not an
+approximation of the net; it is an exact representation of its reachable
+fragment.**
 
 ### 3.3 Well-formed markings
 
@@ -332,7 +333,7 @@ counts trucks *modulo* `RegisterTruck`/`Decommission` by construction.
 
 ### 4.5 The binding-witness requirement (R-BINDING)
 
-> **R-BINDING.** The `TransitionFiringEvent` for a firing records the **full
+> **R-BINDING.** The journal entry (`JournalEntry`) for a firing records the **full
 > guard valuation**: every binding variable *including* values drawn from
 > outside the token colors — the route estimate `r` in `ClaimTruck` and
 > `TransferCargo`, the policy-derived `v` in `Quote` and `t` in `ArriveDest`,
@@ -650,8 +651,8 @@ injection: an injected Negotiator can, at absolute worst, propose a legal
 
 ### 9.1 The encoding
 
-Define `ρ(M)` = the database state where each truck token is one `truck_token`
-row and each delivery token one `delivery_token` row, with `place` =
+Define `ρ(M)` = the database state where each truck token is one `truck`
+row and each delivery token one `delivery` row, with `status` =
 `name()` of the place enum and colors mapped per arch §6.1. Theorem 1
 guarantees `ρ` is a bijection between well-formed markings and well-formed
 table states. Net state maps to columns owned by firings; telemetry columns
@@ -661,7 +662,7 @@ table states. Net state maps to columns owned by firings; telemetry columns
 
 The executor contract (internals §7.5, arch §7): read tokens `FOR UPDATE`,
 re-evaluate `pre`+`guard` via the domain, apply effects as version-guarded
-`UPDATE`s, insert the `transition_firing` event, commit.
+`UPDATE`s, insert the `operations_journal` entry, commit.
 
 > **Theorem 3 (soundness of committed transactions).** Every committed firing
 > transaction corresponds to a legal firing `M —(t,b,τ)→ M′` on the encoded
@@ -699,7 +700,7 @@ INV-5 is enforced three times, independently:
 1. **Domain:** the `ClaimTruck`/`TransferCargo` guards (§4) — proven in §6.5.
 2. **Transaction:** serializability (Theorem 3) — two concurrent claims of one
    truck cannot both commit.
-3. **Storage:** `CREATE UNIQUE INDEX truck_single_assignment ON truck_token
+3. **Storage:** `CREATE UNIQUE INDEX truck_single_assignment ON truck
    (assigned_delivery) WHERE assigned_delivery IS NOT NULL` — even a bypassing
    adapter bug cannot persist a violation of clause (a).
 
@@ -721,7 +722,7 @@ places the entire safety burden on the firing transaction.
 
 ### 10.1 The fold
 
-`Replay.fold(M₀, log)` (internals §10) applies events in order, re-checking
+`Journal.replay(M₀, log)` (internals §10) applies events in order, re-checking
 enabledness (using each event's R-BINDING witness for guard inputs outside net
 state) and applying effects; it throws on any event not enabled — a corrupted,
 reordered, or fabricated log fails loudly.
@@ -746,9 +747,9 @@ version chains totally order all firings on a shared token. Repeatedly swapping
 adjacent commuting pairs transforms `σ` into `σ′` without changing the fold
 (Lemma). ∎
 
-Practical consequence: `transition_firing` needs **no global sequence
+Practical consequence: `operations_journal` needs **no global sequence
 number**; `(token, expectedVersion)` pairs in the event suffice, and
-`fired_at` (event-supplied, §arch 6.2) is for humans, not for correctness.
+`occurred_at` (event-supplied, §arch 6.2) is for humans, not for correctness.
 
 ### 10.3 The audit
 
@@ -765,7 +766,7 @@ this model — all severity-1.
 | Layer | Artifact | What it establishes | Status |
 |---|---|---|---|
 | Pen-and-paper | this document, §6–§10 | invariants/liveness over *the model*; refinement argument | **exists (v1.0)** |
-| Executable | jqwik property suite: random legal firing sequences from random WF markings, `MarkingValidator` (INV-1…5 + PHASE) after every step; replay fold ≡ stepwise; log-mutation kills | the *Java implementation* satisfies the model's invariants; Law-2 determinism | **backlog P3-3 / P3-4** — runs on every build once merged |
+| Executable | jqwik property suite: random legal firing sequences from random WF markings, `BoardAudit` (INV-1…5 + PHASE) after every step; replay fold ≡ stepwise; log-mutation kills | the *Java implementation* satisfies the model's invariants; Law-2 determinism | **backlog P3-3 / P3-4** — runs on every build once merged |
 | Mechanized | TLA+ spec of §9.2–§9.3 (two concurrent claimants, bounded fleet, retry loop) model-checked in CI | no interleaving of the *executor protocol* violates INV-5/atomicity | **roadmap (Post-MVP)** — does not exist; nothing in this document depends on it |
 
 The three layers answer different failure modes: the proofs catch design
@@ -778,18 +779,28 @@ today.
 
 ## 12. Model–code–schema correspondence
 
+This table is the **only bridge across the vocabulary firewall** (internals
+Law 4): the repository contains no specification vocabulary and no reference
+to this document set, so the mapping below — maintained here, on the
+privileged side — is where spec and code meet. Traceability is one-way: this
+document cites code symbols; code never cites this document. Amend this table
+in the same PR as any rename on either side.
+
 | Model element (this doc) | Java (`dakar` module) | CockroachDB |
 |---|---|---|
-| Truck / Delivery colors §2.2 | `TruckToken` / `DeliveryToken` records | `truck_token` / `delivery_token` rows |
+| Truck / Delivery colors §2.2 | `Truck` / `Delivery` records (package `freight`) | `truck` / `delivery` rows |
+| Place §2.1 | `TruckStatus` / `DeliveryStatus` enums | `status` columns (= `name()`) |
 | WF constraints §2.2 | validating canonical constructors | `CHECK`-equivalent enforced at write path + types |
-| Marking §3.1 | `Marking` (SortedMaps, key–identity) | the two tables |
-| Transition schemas §4 | sealed `Transition` records + guard functions | — (transitions are code, not rows) |
-| Guard verdicts | `GuardVerdict` / `GuardReason` | `40001` / zero-row update on race |
-| Firing `M —(t,b,τ)→ M′` §5 | `DakarNet.plan` → `FiringPlan` | one `SERIALIZABLE` txn (§9.2) |
-| Event + R-BINDING §4.5 | `TransitionFiringEvent` (id, transition, witness, actor, `firedAt = snapshot.now()`) | `transition_firing` row |
+| Marking §3.1 | `DispatchBoard` (SortedMaps, key–identity; package `desk`) | the two tables |
+| Transition schemas §4 | sealed `Action` records + rule functions | — (actions are code, not rows) |
+| Guard verdicts | `RuleVerdict` / `RefusalReason` | `40001` / zero-row update on race |
+| Firing `M —(t,b,τ)→ M′` §5 | `FreightDesk.plan` → `ActionPlan` (writes: `StateWrite`) | one `SERIALIZABLE` txn (§9.2) |
+| Enabled ClaimTruck bindings | `FreightDesk.claimCandidates` → `ClaimCandidate` | — |
+| Event + R-BINDING §4.5 | `JournalEntry` (id: `JournalEntryId`, action, `Evidence`, actor, `occurredAt = snapshot.now()`) | `operations_journal` row (`payload` = action + evidence) |
 | Environment step §5.3 | (not in domain — shell adapters) | telemetry column updates |
-| INV-1…5, PHASE §6 | `MarkingValidator` | + `truck_single_assignment` index (INV-5(a)) |
-| Replay §10 | `Replay.fold` | audit job vs. live projection |
+| INV-1…5, PHASE §6 | `BoardAudit` (`ConsistencyViolation`) | + `truck_single_assignment` index (INV-5(a)) |
+| Replay §10 | `Journal.replay` | audit job vs. live projection |
+| Saga driver (actor) | `Actor.COORDINATOR` | actor string `coordinator` |
 | Fairness F1/F2 §7 | — (operational, not code) | time-in-place metrics + alarms |
 
 ---
@@ -804,7 +815,7 @@ today.
 - New invariants get the next INV number; internal lemmas (PHASE) are named,
   not numbered, to keep cross-document references stable.
 - Event compatibility: transitions are append-only versioned
-  (`ClaimTruckV2`), and `Replay.fold` handles all released versions forever
+  (`ClaimTruckV2`), and `Journal.replay` handles all released versions forever
   (internals §10). A model change that cannot replay history is inadmissible.
 
 ---
