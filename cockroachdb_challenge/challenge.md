@@ -1,0 +1,50 @@
+🪳 CockroachDB × AWS Challenge:
+CockroachDB and AWS invite developers, engineers, and AI builders to create the next generation of agentic applications. Harness CockroachDB's distributed AI capabilities, fully managed MCP Server, agent-ready ccloud CLI, open-source Agent Skills Repo, LangChain integrations and Claude/Cursor plugins - all on AWS - to build AI agents with production-grade, persistent memory.
+
+Why Agentic Memory? Why Now?
+AI agents are rapidly moving from experiments into real production workflows, like writing code, running pipelines, diagnosing incidents, and driving more application traffic than any human could. But here's the problem: agents need memory that never goes down.
+
+An agent whose memory goes offline doesn't degrade gracefully, it stops. Traditional databases were optimized for human-scale reads and writes. Agentic systems are different: they spawn autonomously, write constantly, and require memory that persists across regions, failures, and scale  (with zero data loss and no maintenance windows).
+
+CockroachDB was built for exactly this. It is the system of record for agentic memory: globally distributed, always-on, PostgreSQL-compatible, and now natively integrated into the agent toolchain through MCP, cloud, and an open-source skills ecosystem.
+
+This challenge is your invitation to build on that foundation.
+
+Requirements
+The Challenge
+Build an agentic application that uses CockroachDB as its persistent memory layer, deployed on AWS.
+
+Your agent should store, retrieve, and act on memory whether that's conversation history, user context, task state, embeddings, or structured transactional data. The best submissions will demonstrate that memory is not an afterthought, it is the thing that makes an agent useful in production.
+
+All submissions must use at least two of the following CockroachDB tools:
+
+CockroachDB Cloud Managed MCP Server — Connect AI agents directly to CockroachDB clusters with a single config snippet from the Cloud Console. Works natively with Claude Code, Cursor, and VS Code. Safe by default: read-only mode, full audit logging, zero custom proxy required. Endpoint: https://cockroachlabs.cloud/mcp
+
+CockroachDB Distributed Vector Indexing — Store and query embeddings at scale using CockroachDB's vector support with distributed indexing. Semantic search and retrieval stay fast as your data grows — no separate vector store to maintain, no reindexing pain, and no consistency gaps between your vector data and your operational database. Ideal for RAG pipelines, long-term agent memory, and semantic search applications.
+
+ccloud CLI (Agent-Ready) — Give your agent direct, secure access to the full CockroachDB Cloud control plane. Provision clusters, manage backups, configure networking, monitor audit logs — all from the terminal. Designed for AI with consistent noun-verb patterns, JSON output on every command, and granular service-account-based RBAC.
+
+CockroachDB Agent Skills Repo (Open Source) — A curated, open-source collection of machine-executable Agent Skills encoding CockroachDB expertise. Skills span onboarding, query/schema design, operations, performance, security, and observability. Portable across Claude, Cursor, LangChain, and any MCP-compatible client.
+
+All submissions must also use at least one AWS service:
+
+Amazon Bedrock (foundation models, knowledge bases, or agents)
+AWS Lambda (serverless agent execution)
+Amazon ECS / EKS (containerized agent workloads)
+Amazon S3 (artifact or document storage)
+Amazon SageMaker (model training or inference)
+Amazon Bedrock Agents (multi-step agentic workflows)
+Any other AWS service that powers your agent's environment
+ 
+
+Judging Criteria
+Agentic Memory Design
+Does CockroachDB play a meaningful, production-grade role as the agent's memory layer? Is it used for more than toy queries — state, embeddings, context, or transactional data at real scale?
+Technical Implementation
+Is the integration with CockroachDB tools (distributed vector index, MCP Server, ccloud CLI) quality software engineering? Does the agent use the tools correctly and safely?
+Real-World Impact
+How big of an impact could the project have on real users or workflows? Is the use case meaningful, not just technically impressive?
+Production Readiness
+Is the design secure, observable, and scalable? Has the team thought about resilience, access control, and what happens when things go wrong?
+Creativity & Originality
+Is this a genuinely new idea or a novel application of the technology? Does it demonstrate insight into what makes agentic systems different from traditional apps?
