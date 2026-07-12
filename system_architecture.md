@@ -481,6 +481,15 @@ CREATE TABLE delivery (
   version             INT8 NOT NULL DEFAULT 1,
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Product-API idempotency ledger (v0.2.2, shipped with the P2 skeleton): one
+-- row per accepted create request, so a retried or raced request key returns
+-- the delivery the first request created instead of creating twice.
+CREATE TABLE api_request (
+  request_key   STRING PRIMARY KEY,
+  delivery_id   UUID NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 ```
 
 ### 6.2 Episodic memory — event log, decision traces, negotiation transcripts

@@ -36,7 +36,7 @@ Two sentences govern every decision in this document:
 | Maven coordinates | `com.iohaus:dakar:1.0.0` |
 | Maven parent | `dakar-parent` (inherits toolchain; imports `dakar-bom`) |
 | Reactor | added to `<modules>` in the root `dakar-build-parent` aggregator |
-| Java | 25 (records, sealed interfaces, pattern matching) |
+| Java | JDK 25 toolchain; bytecode `--release 21` (Quarkus 3.20 rejects class-file 69, and `java21` is the newest managed Lambda runtime — backlog P0-1, 2026-07-12). The language surface used (records, sealed interfaces, switch patterns) is fully within 21; no unnamed variables (`_`). Revisit when the platform reads class-file 69. |
 | Packaging | plain `jar` — **not** a Quarkus module, no `quarkus-maven-plugin` |
 | Root package | `com.iohaus.dakar` |
 
@@ -158,8 +158,10 @@ column — it is a privileged document — but code uses only the right column):
 com.iohaus.dakar
 ├── freight/      Operational entities: Truck, Delivery, TruckStatus, DeliveryStatus,
 │                 CargoClass; typed IDs (TruckId, DeliveryId, ClientId, JournalEntryId); Tons
-├── desk/         The freight desk: Action hierarchy, rules, DispatchBoard, FreightDesk, ActionPlan
-├── journal/      JournalEntry, Journal.replay
+├── desk/         The freight desk: Action hierarchy, rules, DispatchBoard, FreightDesk,
+│                 ActionPlan, StateWrite, JournalEntry, Evidence, Actor, Snapshot, Route*
+├── journal/      Journal.replay (P3-4). JournalEntry lives in desk/ — plans embed
+│                 entries, so a journal-resident entry type would cycle with desk (v0.3.1)
 ├── policy/       Procedural memory: PolicySet, floor-price formula evaluation
 ├── agent/        Policy ports (DispatchPolicy, NegotiationPolicy) + validation
 ├── port/         Non-policy ports: IdSource (and nothing else — see §8.4)
@@ -269,10 +271,14 @@ consult, assembled by the shell *before* the domain is entered:
 ```java
 public record Snapshot(
     DispatchBoard board,
-    PolicySet policies,     // procedural memory: active guardrail versions
     RouteTable routes,      // pre-resolved distance/duration estimates
     Instant now) {}
 ```
+
+*(v0.3.1: the shipped P2 shape. A `PolicySet policies` member — procedural
+memory: active guardrail versions — joins this record with policy storage in
+P3-7; no P2 rule consults a policy, so carrying an empty placeholder would
+have violated the no-placeholder rule.)*
 
 **Routing is data, not a call.** External routing APIs are impure and slow, so
 route estimates do not enter the domain as a port that is called
@@ -381,9 +387,10 @@ action into a **plan**, or refuses it:
 ```java
 public sealed interface ActionOutcome {
   record Planned(ActionPlan plan)             implements ActionOutcome {}
-  record Refused(List<RefusalReason> why)     implements ActionOutcome {}
+  record Refused(List<RefusalReason> reasons) implements ActionOutcome {}
   record UnknownRecord(String id)             implements ActionOutcome {}
-  record InvalidRequest(String detail)        implements ActionOutcome {}
+  // InvalidRequest(detail) joins in P3-1, when actions gain arguments that
+  // can be structurally invalid.
 }
 
 public record ActionPlan(
@@ -391,13 +398,20 @@ public record ActionPlan(
     List<StateWrite> writes,          // new entity values + expected old versions
     JournalEntry entry) {}            // the journal row, fully formed
 
-public record StateWrite(
-    String recordId, long expectedVersion, Object newValue) {}
+public sealed interface StateWrite {  // v0.3.1: typed, not stringly —
+  long expectedVersion();             // the executor pattern-matches to a table
+  record TruckWrite(Truck newValue, long expectedVersion)       implements StateWrite {}
+  record DeliveryWrite(Delivery newValue, long expectedVersion) implements StateWrite {}
+  // ctor enforces newValue.version() == expectedVersion + 1
+}
 ```
 
 ```java
-ActionOutcome outcome = desk.plan(action, snapshot, idSource);
+ActionOutcome outcome = desk.plan(action, snapshot, actor, idSource);
 ```
+
+*(v0.3.1: `plan` takes the requesting `Actor` — the journal entry is fully
+formed by the desk, and the actor is part of the entry.)*
 
 `plan(...)` re-evaluates the rules against the snapshot even if the caller
 already enumerated — **enumeration is advice; planning is the check**. The
@@ -547,7 +561,7 @@ public record JournalEntry(
                                      // signal/position facts the rules consulted —
                                      // replay must be closed over the journal alone
                                      // (model.md R-BINDING, §4.5)
-    Actor actor,                     // DISPATCHER | NEGOTIATOR | COORDINATOR | STAFF
+    Actor actor,                     // DISPATCHER | NEGOTIATOR | COORDINATOR | STAFF | PRODUCT
     Instant occurredAt) {}           // = snapshot.now(), NOT a wall-clock read
 ```
 
@@ -724,7 +738,7 @@ two machines, two runs, or two regions?* If yes, it is shell.
 FreightDesk.requiredRoutes(DispatchBoard)               → RouteRequests
 FreightDesk.claimCandidates(Snapshot)                   → List<ClaimCandidate>
 FreightDesk.offerBand(DeliveryId, Snapshot)             → Optional<OfferBand>
-FreightDesk.plan(Action, Snapshot, IdSource)            → ActionOutcome  // IdSource = sanctioned impurity
+FreightDesk.plan(Action, Snapshot, Actor, IdSource)     → ActionOutcome  // IdSource = sanctioned impurity
 Journal.replay(DispatchBoard, List<JournalEntry>)       → DispatchBoard
 StatusProjection.of(Delivery, Optional<Truck>)          → ClientStatus
 BoardAudit.check(DispatchBoard)                         → List<ConsistencyViolation>

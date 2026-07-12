@@ -191,6 +191,9 @@ internals Law 2). `sig(x)` denotes an environment signal (§5.2).
 ClaimTruck (k, d, r : RouteEstimate)                                  [op]
   pre:    place(k) ∈ {Garage, EnRouteEmpty},  place(d) = Requested
   guard:  cap(k) ≥ ton(d)  ∧  hrs(k) ≥ estHours(r)  ∧  asg(k) = ⊥
+          -- estHours(r) ≜ drive(pos(k) → orig(d)) + drive(orig(d) → dest(d)):
+          -- the repositioning leg plus the loaded leg (implementation-fixed
+          -- v1.0.1; both estimates are recorded as R-BINDING witnesses)
   effect: asg(k) := id(d);  place(d) := Matched
 
 Quote (d, offer : MONEY, v : DUR)         -- v = quote validity, from policy   [op]
