@@ -120,6 +120,72 @@ actions gain arguments that can be structurally invalid.
     injectivity and the desk throws `IllegalStateException` — corrupt state
     fails loudly, severity-1.
 
+### 1.3a The full desk (P3-1, 2026-07-12)
+
+**Freight amendments.** `DeliveryStatus` gained `DISPUTED` (maps to client
+status `PAYMENT_OVERDUE`). `Delivery` gained `quoteExpiresAt` (stamped by
+`Quote` = now + validity) and `paymentDueAt` (stamped by `ArriveDest` = now +
+terms), with status coherence enforced in the constructor: quoted-onward
+statuses require an agreed price and a quote expiry; `REQUESTED`/`MATCHED`
+forbid them; payment-phase statuses require a payment due time; `CANCELLED`
+is exempt (cancellation can happen at any stage).
+
+**Action inventory (22).** Operational: `ClaimTruck`, `Quote(delivery, offer,
+validity)`, `AcceptQuote`, `QuoteExpired` ⏲, `BeginReposition`,
+`ArriveOrigin`, `Load(truck, loadedTons)`, `ArriveDest(truck, paymentTerms)`,
+`ConfirmPayment`, `Offload(truck, nextTruckStatus ∈ {GARAGE,
+EN_ROUTE_EMPTY})`, `PaymentOverdue` ⏲, `RecordDisruption(delivery, note)`,
+`Cancel`. Staff-only (desk-enforced `STAFF_AUTHORIZATION_REQUIRED` for any
+other actor): `ReleaseTruck(truck, next)`, `SettleDispute`, `WriteOff`,
+`TransferCargo(from, to)`, `AbortLoaded(truck, next ∈ {GARAGE,
+MAINTENANCE})`, and the fleet administration set `RegisterTruck`,
+`Decommission`, `StartMaintenance`, `CompleteMaintenance`.
+
+Rule highlights (each refusal cause tested):
+- **Quote**: delivery MATCHED; offer ≥ floor (`OFFER_BELOW_FLOOR`). Stamps
+  price + expiry.
+- **AcceptQuote / QuoteExpired**: QUOTED, then strictly before / at-or-after
+  the stamped expiry (`QUOTE_EXPIRED` / `QUOTE_NOT_EXPIRED`). Expiry cancels
+  and releases the reserved truck (LOADING → EN_ROUTE_EMPTY, else in place).
+- **BeginReposition**: GARAGE + reserved (`TRUCK_NOT_ASSIGNED`); refuses
+  `ALREADY_AT_PICKUP` when the telemetry position equals the pickup.
+- **ArriveOrigin/Load/ArriveDest**: signal-driven leg; statuses must pair
+  (truck ↔ carried delivery); `Load` re-checks capacity against the actually
+  loaded tonnage. The arrival signal discharges the position predicate; the
+  position is journaled as an Evidence witness.
+- **ConfirmPayment**: AWAITING_PAYMENT or DISPUTED; payment is monotone
+  (`PAYMENT_ALREADY_CONFIRMED` guards double signals).
+- **Offload / SettleDispute**: the only two paths to COMPLETED, both requiring
+  confirmed payment (`PAYMENT_NOT_CONFIRMED`) — completion without payment is
+  unrepresentable end to end.
+- **PaymentOverdue** ⏲: AWAITING_PAYMENT, unpaid, at-or-after `paymentDueAt`
+  (`PAYMENT_NOT_YET_DUE`) → DISPUTED.
+- **ReleaseTruck**: frees an OFFLOADING truck from a DISPUTED delivery
+  (cargo to storage); bumps the delivery version — custody changed, stale
+  plans must die.
+- **SettleDispute/WriteOff**: require the truck already detached
+  (`TRUCK_STILL_ATTACHED`).
+- **TransferCargo**: rescue for a broken loaded carrier — moves the
+  assignment atomically (from → MAINTENANCE unassigned, to → EN_ROUTE_LOADED
+  assigned) in one plan, re-checking capacity and driver hours over the
+  rescue legs (to→cargo, cargo→drop-off); route gating mirrors ClaimTruck.
+- **RecordDisruption**: journal-only in effect, but bumps the delivery
+  version deliberately so concurrent stale plans are invalidated by the
+  version guard.
+- **Administration**: `RegisterTruck` → `StateWrite.TruckInsert` (version 1;
+  duplicate id refuses `ALREADY_REGISTERED`, and a raced duplicate insert is
+  turned into that refusal by the executor's 23505→re-plan path);
+  `Decommission` → `StateWrite.TruckDelete` (GARAGE/MAINTENANCE, unassigned).
+
+**StateWrite** grew two variants: `TruckInsert(newValue)` (version must be 1)
+and `TruckDelete(id, expectedVersion)`. The executor maps them to
+INSERT/DELETE, still version-guarded where applicable, and now treats
+SQLSTATE 23505 like 40001: lost race → fresh snapshot → re-plan.
+
+**Policy phasing.** Quote validity and payment terms are action arguments
+supplied by the shell (config) until `PolicySet` lands (P3-7); they are
+journaled inside the action payload, so replay stays closed.
+
 ### 1.4 `port` — `IdSource`
 
 `UUID next()`. The only sanctioned impurity reachable from the core:

@@ -219,6 +219,10 @@ BeginReposition (k, d)                                                [op]
 ArriveOrigin (k, d)                                                   [op]
   pre:    place(k) ∈ {EnRouteEmpty, Garage},  place(d) = Agreed
   guard:  asg(k) = id(d)  ∧  pos(k) = orig(d)        -- position: telemetry
+          -- implementation refinement (v1.0.1): the arrival signal discharges
+          -- the position predicate (signals are guard inputs, §5.2); the
+          -- telemetry position at decision time is recorded as an R-BINDING
+          -- witness rather than compared for exact equality
   effect: place(k) := Loading
 
 Load (k, d, loadedTons : TONS)                                        [op]

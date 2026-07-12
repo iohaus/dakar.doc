@@ -312,17 +312,27 @@ public record RouteEstimate(Kilometers distance, Duration duration) {}
 Actions are a sealed hierarchy; each carries its arguments:
 
 ```java
-public sealed interface Action
-    permits ClaimTruck, Quote, AcceptQuote, QuoteExpired, BeginReposition,
-            ArriveOrigin, Load, ArriveDest, ConfirmPayment, PaymentOverdue,
-            Offload, ReleaseTruck, SettleDispute, WriteOff, TransferCargo,
-            AbortLoaded, RecordDisruption, Cancel {}
+public sealed interface Action permits
+    ClaimTruck, Quote, AcceptQuote, QuoteExpired,
+    BeginReposition, ArriveOrigin, Load, ArriveDest,
+    ConfirmPayment, Offload, PaymentOverdue,
+    ReleaseTruck, SettleDispute, WriteOff, TransferCargo, AbortLoaded,
+    RecordDisruption, Cancel,
+    RegisterTruck, Decommission, StartMaintenance, CompleteMaintenance {}
 
-public record ClaimTruck(TruckId truck, DeliveryId delivery) implements Action {}
-public record Quote(DeliveryId delivery, Money offer)         implements Action {}
-public record Offload(TruckId truck, DeliveryId delivery)     implements Action {}
-// ... one record per action in model.md §4
+public record ClaimTruck(TruckId truck, DeliveryId delivery)          implements Action {}
+public record Quote(DeliveryId delivery, Money offer, Duration validity) implements Action {}
+public record Offload(TruckId truck, TruckStatus nextTruckStatus)     implements Action {}
+// ... one record per action in model.md §4; the administrative sub-net
+// (RegisterTruck/Decommission/Start-/CompleteMaintenance) shipped with P3-1.
 ```
+
+*(v0.3.1 decisions: policy-derived windows — quote validity, payment terms —
+travel as action arguments until `PolicySet` lands in P3-7; `Offload`,
+`ReleaseTruck`, `AbortLoaded` carry the staff/coordinator choice of the
+truck's next status; journal-only `RecordDisruption` bumps the delivery
+version so concurrent stale plans are invalidated; staff-only actions refuse
+non-STAFF actors at the desk with `STAFF_AUTHORIZATION_REQUIRED`.)*
 
 ### 7.2 Rules
 
@@ -337,14 +347,18 @@ public sealed interface RuleVerdict {
   record Refused(List<RefusalReason> reasons) implements RuleVerdict {}
 }
 
-public enum RefusalReason {
-  CAPACITY_EXCEEDED, INSUFFICIENT_DRIVER_HOURS, TRUCK_ALREADY_ASSIGNED,
-  OFFER_BELOW_FLOOR, PAYMENT_NOT_CONFIRMED, WRONG_STATUS, ALREADY_LOADED,
-  MISSING_ROUTE, DEADLINE_UNREACHABLE,
+public enum RefusalReason {                  // shipped set (P3-1, v0.3.1)
+  WRONG_STATUS,                              // any status precondition, uniformly
+  TRUCK_ALREADY_ASSIGNED, TRUCK_NOT_ASSIGNED,
+  CAPACITY_EXCEEDED, INSUFFICIENT_DRIVER_HOURS, MISSING_ROUTE,
+  OFFER_BELOW_FLOOR,
   QUOTE_EXPIRED, QUOTE_NOT_EXPIRED,
-  PAYMENT_NOT_YET_DUE, PAYMENT_ALREADY_CONFIRMED,
-  DELIVERY_NOT_DISPUTED, TRUCK_STILL_ATTACHED,
-  STAFF_AUTHORIZATION_REQUIRED /* ... */ }
+  PAYMENT_NOT_CONFIRMED, PAYMENT_ALREADY_CONFIRMED, PAYMENT_NOT_YET_DUE,
+  TRUCK_STILL_ATTACHED,
+  STAFF_AUTHORIZATION_REQUIRED, ALREADY_REGISTERED, ALREADY_AT_PICKUP }
+// v0.3.1: draft per-case status names (DELIVERY_NOT_DISPUTED, ALREADY_LOADED,
+// WRONG_PLACE-style) collapsed into WRONG_STATUS; time-based causes keep
+// their own names because they are not status facts.
 ```
 
 The rule table in model.md §4 is normative. **Traceability is one-way (Law
