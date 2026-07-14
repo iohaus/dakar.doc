@@ -36,7 +36,7 @@ Two sentences govern every decision in this document:
 | Maven coordinates | `com.iohaus:dakar:1.0.0` |
 | Maven parent | `dakar-parent` (inherits toolchain; imports `dakar-bom`) |
 | Reactor | added to `<modules>` in the root `dakar-build-parent` aggregator |
-| Java | JDK 25 toolchain; bytecode `--release 21` (Quarkus 3.20 rejects class-file 69, and `java21` is the newest managed Lambda runtime — backlog P0-1, 2026-07-12). The language surface used (records, sealed interfaces, switch patterns) is fully within 21; no unnamed variables (`_`). Revisit when the platform reads class-file 69. |
+| Java | 25 end to end since 2026-07-13 (Quarkus 3.37.2 reads class-file 69; the earlier `--release 21` constraint is retired — backlog P0-1). Unnamed variables (`_`) and other 22–25 features are permitted again. Lambda-runtime packaging is a P2-7 deploy-time decision. |
 | Packaging | plain `jar` — **not** a Quarkus module, no `quarkus-maven-plugin` |
 | Root package | `com.iohaus.dakar` |
 
@@ -271,14 +271,18 @@ consult, assembled by the shell *before* the domain is entered:
 ```java
 public record Snapshot(
     DispatchBoard board,
+    PolicySet policies,     // procedural memory: active guardrail versions (P3-7)
     RouteTable routes,      // pre-resolved distance/duration estimates
     Instant now) {}
 ```
 
-*(v0.3.1: the shipped P2 shape. A `PolicySet policies` member — procedural
-memory: active guardrail versions — joins this record with policy storage in
-P3-7; no P2 rule consults a policy, so carrying an empty placeholder would
-have violated the no-placeholder rule.)*
+*(v0.3.2: `policies` joined with P3-7. `PolicySet(pricing, quoteValidity,
+paymentTerms)`; `PricingPolicy(floorBase, floorPerTonKm, ceilingMultiplier)`
+owns the floor/ceiling formulas. `Quote` and `ArriveDest` consequently carry
+no window arguments — the desk reads the snapshot's policies and journals the
+applied window as an Evidence witness (`appliedQuoteValidity` /
+`appliedPaymentTerms`), keeping replay closed over the journal per model.md
+R-BINDING.)*
 
 **Routing is data, not a call.** External routing APIs are impure and slow, so
 route estimates do not enter the domain as a port that is called
@@ -612,9 +616,9 @@ The product-facing status vocabulary (arch §9) is a pure function in this
 module, so the API layer cannot invent its own mapping:
 
 ```java
-public enum ClientStatus { RECEIVED, PREPARING_QUOTE, QUOTE_READY, DRIVER_EN_ROUTE,
-                           IN_TRANSIT, AWAITING_PAYMENT, PAYMENT_OVERDUE,
-                           DELIVERED, CANCELLED }
+public enum ClientStatus { RECEIVED, PREPARING_QUOTE, QUOTE_READY, SCHEDULED,
+                           DRIVER_EN_ROUTE, IN_TRANSIT, AWAITING_PAYMENT,
+                           PAYMENT_OVERDUE, DELIVERED, CANCELLED }
 
 public final class StatusProjection {
   public static ClientStatus of(Delivery d, Optional<Truck> assigned) { ... }

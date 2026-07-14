@@ -186,6 +186,113 @@ SQLSTATE 23505 like 40001: lost race → fresh snapshot → re-plan.
 supplied by the shell (config) until `PolicySet` lands (P3-7); they are
 journaled inside the action payload, so replay stays closed.
 
+### 1.3b Policies, enumeration, audit, replay (P3-3/4/6/7, 2026-07-12)
+
+**`policy.PricingPolicy` / `policy.PolicySet`** — procedural memory as typed
+data. Floor = `floorBase + floorPerTonKm × tonnage × distance`; ceiling =
+`floor × ceilingMultiplier` (validated ≥ 1). `PolicySet` carries the pricing
+policy plus the quote-validity and payment-terms windows (validated
+positive). `Snapshot` is now `(board, policies, routes, now)`. `Quote` and
+`ArriveDest` take no window arguments: the desk reads the snapshot's policies
+and journals the applied window as evidence (`appliedQuoteValidity`,
+`appliedPaymentTerms`) so replay never consults the policy table.
+
+**Enumeration (`FreightDesk`)** — `claimCandidates(snapshot)`: only enabled
+truck–delivery pairs (status, assignment, capacity, resolvable legs, hours),
+ordered by (deliveryId, truckId), annotated with repositioning distance,
+total drive time, and hours slack. `offerBand(deliveryId, snapshot)`: present
+only for MATCHED deliveries; `OfferBand.admits` is the negotiator's bound —
+out-of-band proposals are refused, never clamped.
+
+**`check.BoardAudit`** — the executable consistency audit. Rules:
+`ASSIGNMENT_INJECTIVE` (≤ 1 holder per delivery), `ASSIGNMENT_TARGET` (a held
+delivery exists and is active), `ASSIGNMENT_COVERAGE` (MATCHED…
+AWAITING_PAYMENT must have a holder), `PHASE_COHERENCE` (holder truck status
+must pair with the delivery status), `CAPACITY` (holder can carry its load),
+`PAYMENT_BEFORE_COMPLETION`. Any violation on a live board is severity-1.
+
+**`journal.Journal.replay`** — total fold over journal entries; throws
+`ReplayException` when an entry was not allowed at its point (statuses,
+assignment, payment monotonicity, stamped time predicates against
+`occurredAt`, staff authority). Measurement-dependent rules are treated as
+witnessed by the entry's evidence rather than recomputed — the journal does
+not carry telemetry (model.md §5.3). Property-pinned: replay equals the
+desk's fold on seeded legal runs; delivery-targeting mutations are always
+detectable. Swaps of *commuting* entries (a disruption note beside a payment)
+replay to the same board by design — an equivalent history, not corruption.
+
+**`testing.LegalRuns` (test util)** — seeded generator of legal action
+sequences: random fleet/work, up to 40 steps drawn from all 22 actions with
+random actors (staff where required), desk-planned and folded; produces the
+entry list plus every intermediate board. Shared by the consistency and
+replay property suites; determinism comes from the seed.
+
+**Shell (P3-7/P3-8)** — `V2__pricing_and_window_policies.sql` creates the
+versioned `policy` table (one active version per key via partial unique
+index) and seeds v1 from the former dev config. `PolicyStore` parses active
+rows into a `PolicySet` (typed `PolicyConfigurationException` on missing or
+unreadable definitions) and is read inside the snapshot's read-only
+transaction — board and policies are one consistent view. The product API
+prices floors through the policy (`DevFloorPriceModel` deleted) and gained:
+staff `POST /{id}/quote` (offer in operation currency), client
+`POST /v1/quotes/{id}/accept`, and staff `POST /{id}/signals`
+(DEPARTED / ARRIVED_AT_PICKUP / LOADED / ARRIVED_AT_DESTINATION /
+PAYMENT_CONFIRMED / OFFLOADED — the stubbed signal surface until the Phase-5
+coordinator). `ExecutionResponses` centralizes the ExecutionResult → HTTP
+mapping.
+
+### 1.3c Episodic memory (P4, 2026-07-13)
+
+**`freight.LaneKey`** — origin→destination bucketed to half-degree cells
+(`"29,-35>29,-34"`); nearby routes share a lane, giving retrieval and lane
+aggregates a stable grouping key. Deterministic (`StrictMath.floor`).
+
+**`agent.NegotiationEpisodeDraft`** — what the desk-side caller hands to the
+shell for recording: delivery/client ids, lane, cargo, tonnage, opening
+offer, transcript. The transcript carries no client identifiers or personal
+data — it is embedded and retrieved as advisory context.
+
+**`agent.EpisodeOutcome`** — OPEN → WON (quote accepted) / LOST; `dbValue()`
+is the persisted lowercase string.
+
+**`agent.SimilarEpisode` / `agent.NegotiationContext`** — the retrieval
+shape the Phase-5 Negotiator consumes: k most-similar past episodes
+(with cosine similarity), plus distilled `ClientFacts` (win rate, average
+final price, episode count) and `LaneFacts` (median price per ton) when the
+aggregates exist.
+
+**Shell `embedding` package** — `TranscriptEmbedder` (contract: 1024
+dimensions, pinned to the `VECTOR(1024)` column), `LocalHashEmbedder`
+(deterministic hashed bag-of-words, L2-normalized — the development/test
+provider; shared wording ⇒ high cosine similarity), and
+`BedrockTranscriptEmbedder` (Titan Text Embeddings V2 via `InvokeModel`;
+typed `EmbeddingException` on transport/shape failures; unit-tested against
+a fake client — the real-model contract test is a cloud leg). Provider
+selected by `dakar.embedding.provider` (`local` default; the Bedrock client
+is only constructed when selected). Embeddings are computed **before** the
+action transaction: an embedding outage fails the request (503
+`EMBEDDING_UNAVAILABLE`), never stores an episode the ledger cannot recall.
+
+**Shell `EpisodeStore`** — companion writes for the executor
+(`record`/`markWon`/`markLost`) so the episode row commits **in the same
+transaction** as the action's journal entry (quote inserts `open`; accept
+marks `won` and copies the agreed price; lost-marking is wired when
+cancellation/expiry surfaces arrive with P5-5). `retrieveContext` runs the
+kNN (`embedding <=> query`, lane+cargo prefilter, won/lost only) and joins
+the aggregates; vectors are unit-normalized so cosine and L2 rankings agree.
+`distill()` is an idempotent full re-aggregation into `client_profile` and
+`lane_stat` (median via `percentile_cont`), scheduled by
+`SemanticDistillation` every `dakar.distillation.every`.
+
+**Executor `CompanionWrite`** — the general mechanism: extra rows that must
+exist iff the action commits; a companion failure rolls back the whole
+action (property held by test).
+
+**Schema V3** — `negotiation_episode` (`VECTOR(1024)` + vector index,
+lane/cargo index), `client_profile`, `lane_stat`. Requires CockroachDB ≥
+v25.2 (`feature.vector_index.enabled`); the local stack runs v25.2.20 since
+this phase.
+
 ### 1.4 `port` — `IdSource`
 
 `UUID next()`. The only sanctioned impurity reachable from the core:

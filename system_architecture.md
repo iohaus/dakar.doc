@@ -531,23 +531,30 @@ CREATE TABLE decision_trace (
 );
 
 -- Negotiation episodes with embeddings for semantic recall of "deals like this".
+-- (v0.2.3: shipped as V3 — outcome gains 'open' for quote-time recording,
+--  won/lost settle on acceptance/loss; embeddings are unit-normalized, so
+--  cosine and L2 rankings agree and the plain vector index serves both.)
 CREATE TABLE negotiation_episode (
   episode_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   delivery_id   UUID NOT NULL,
   client_id     UUID NOT NULL,
-  lane_key      STRING NOT NULL,                -- origin→dest bucket
+  lane_key      STRING NOT NULL,                -- origin→dest half-degree bucket
   cargo_class   STRING NOT NULL,
   tonnage       DECIMAL NOT NULL,
-  opening_offer DECIMAL, final_price DECIMAL, outcome STRING,  -- won | lost
+  opening_offer DECIMAL,
+  final_price   DECIMAL,
+  outcome       STRING NOT NULL DEFAULT 'open', -- open | won | lost
   transcript    STRING NOT NULL,
-  embedding     VECTOR(1024) NOT NULL,          -- Bedrock Titan / Cohere embed
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  embedding     VECTOR(1024) NOT NULL,          -- Titan Text Embeddings V2 contract
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  INDEX (delivery_id),
+  INDEX (lane_key, cargo_class)
 );
 
--- Distributed vector index for episodic retrieval at scale.
-CREATE VECTOR INDEX neg_episode_vec
-  ON negotiation_episode (embedding)
-  WITH (metric = 'cosine');
+-- Distributed vector index for episodic retrieval at scale
+-- (requires CockroachDB >= v25.2 with feature.vector_index.enabled).
+CREATE VECTOR INDEX negotiation_episode_embedding
+  ON negotiation_episode (embedding);
 ```
 
 The vector index is used for **episodic memory over business episodes**, not
@@ -560,17 +567,22 @@ moment where the agent "remembers" a deal the ledger doesn't have.
 ### 6.3 Semantic and procedural memory
 
 ```sql
+-- (v0.2.3: shipped V3 shapes — distilled by the scheduled aggregation job.
+--  Richer facets from the v0.1 sketch (price sensitivity, demand index,
+--  seasonality, profile embeddings) join when an agent consumes them.)
 CREATE TABLE client_profile (              -- semantic: distilled from episodes
-  client_id     UUID PRIMARY KEY,
-  win_rate      DECIMAL, avg_discount DECIMAL, price_sensitivity DECIMAL,
-  notes_embedding VECTOR(1024),
-  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  client_id        UUID PRIMARY KEY,
+  win_rate         DECIMAL,
+  avg_final_price  DECIMAL,
+  episode_count    INT8 NOT NULL DEFAULT 0,
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE lane_stat (                   -- semantic: demand & pricing by lane
-  lane_key      STRING PRIMARY KEY,
-  median_price_per_ton DECIMAL, demand_index DECIMAL,
-  seasonality   JSONB, updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+CREATE TABLE lane_stat (                   -- semantic: pricing by lane
+  lane_key             STRING PRIMARY KEY,
+  median_price_per_ton DECIMAL,
+  episode_count        INT8 NOT NULL DEFAULT 0,
+  updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE policy (                      -- procedural: versioned guardrails
@@ -858,6 +870,7 @@ for free, because the observable states are precisely abstractions of markings.
 | Delivery ∈ Requested | "Received — finding a truck" |
 | Delivery ∈ Matched/Quoted | "Preparing your quote" |
 | Delivery ∈ Agreed, Truck ∈ EnRouteEmpty/Loading | "Driver on the way to pick up" |
+| Delivery ∈ Agreed, Truck not yet moving | "Scheduled — assigning your driver" *(v0.2.2)* |
 | Delivery ∈ InTransit | "In transit" |
 | Delivery ∈ AwaitingPayment | "Awaiting payment" |
 | Delivery ∈ Disputed | "Payment overdue — on hold" |
