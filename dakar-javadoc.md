@@ -293,6 +293,46 @@ lane/cargo index), `client_profile`, `lane_stat`. Requires CockroachDB ≥
 v25.2 (`feature.vector_index.enabled`); the local stack runs v25.2.20 since
 this phase.
 
+### 1.3d Agents (P5, 2026-07-14)
+
+**Domain ports (`agent/`)** — `DispatchPolicy.choose(candidates, DispatchContext)`
+and `NegotiationPolicy.proposeOffer(band, NegotiationContext)`. Ports are
+inputs, not authorities: callers discard non-candidate choices and reject
+(never clamp) out-of-band offers; the desk re-checks every rule at plan time
+regardless. `DispatchContext(delivery, laneFacts)`.
+
+**Shell `agents` package** — hosted in `dakar-quarkus` behind the Quarkus
+scheduler while cloud triggers are blocked (the P5-1 decision; the
+EventBridge-driven Lambda module is the cloud leg).
+- `LocalDispatchPolicy` / `LocalNegotiationPolicy` — deterministic baselines
+  (least repositioning; band midpoint). Default provider.
+- `BedrockConverse` — one **forced tool call** per decision over the Converse
+  API; lazy client (missing credentials degrade at call time as
+  `PolicyUnavailableException`, never at boot). `BedrockDispatchPolicy`
+  (`choose_truck{truckId, rationale}` over the offered candidates — an
+  un-offered truck is discarded with a warning) and
+  `BedrockNegotiationPolicy` (`propose_offer{amount, rationale}`; unreadable
+  amounts → empty). Fake-client unit tests pin the request contract and the
+  failure taxonomy; live-model contract tests are the cloud leg.
+- `DispatchAutomation.tick()` — snapshot → candidates per requested delivery
+  → policy → validate-against-offered-set → execute as `DISPATCHER` with the
+  `decision_trace` row **co-committed** with the claim; abstentions,
+  violations, and refusals leave standalone traces; `PolicyUnavailable`
+  skips the tick (degraded, never unsafe).
+- `LifecycleCoordinator.tick()` — the timekeeper: `QuoteExpired` (with the
+  episode marked lost in the same transaction) and `PaymentOverdue` fire on
+  time alone. This discharges fairness assumption F1.
+- `QuoteAdviceResource` (`GET /v1/deliveries/{id}/quote-advice`, staff-only) —
+  human-in-the-loop negotiation: retrieval context + offer band + drafted
+  offer with floor/ceiling for staff judgment; drafts are traced
+  (`drafted`/`abstained`/`policy-violation`); out-of-band drafts return 502
+  `ADVICE_REJECTED`. Staff still quote through the existing endpoint.
+
+**`DecisionTraceStore`** — the `decision_trace` writer: companion form
+(trace commits with the action it explains, `journal_entry_id` set) and
+standalone form (no-action episodes). Traces carry candidates/choice/outcome
+as JSONB.
+
 ### 1.4 `port` — `IdSource`
 
 `UUID next()`. The only sanctioned impurity reachable from the core:
@@ -315,13 +355,13 @@ for wording that depends on truck state (used from P3-5).
 
 ## 2. Module `dakar-quarkus` (shell)
 
-### 2.1 `shell.wiring.CoreWiring`
+### 2.1 `DakarConfiguration`
 
 CDI producers for the pure core: `FreightDesk`, `IdSource`
 (`UUID::randomUUID`), `Clock` (system UTC). The core carries no container
 annotations; all wiring happens here.
 
-### 2.2 `shell.persistence`
+### 2.2 `persistence`
 
 **`FreightRows`** — the row ↔ record mapping and the canonical column lists.
 Positions are selected as lat/lon (`ST_Y`/`ST_X` over the stored
@@ -374,14 +414,14 @@ rollback. Reads: by id, and the reserving truck via
 deliberate-config-change. Neither is ever swallowed; API maps the former to
 503 and treats the latter as fatal.
 
-### 2.3 `shell.routing.HaversineRouteEstimator`
+### 2.3 `routing.HaversineRouteEstimator`
 
 Development estimator: straight-line distance at
 `dakar.routing.average-speed-kmh` (validated positive). Deterministic; time
 O(legs). Replaced by a road-network adapter without touching the core (routes
 are snapshot data).
 
-### 2.4 `shell.pricing.DevFloorPriceModel`
+### 2.4 `pricing.DevFloorPriceModel`
 
 Internal floor = `floor-base + floor-per-ton-km × tonnage × straight-line
 km`, all `Money` arithmetic (no raw `BigDecimal` math). Base validated
@@ -389,7 +429,7 @@ positive so every created delivery satisfies the record's floor > 0 rule. The
 floor is internal and never appears in any client response. Superseded by the
 versioned pricing policy (P3-7).
 
-### 2.5 `shell.api`
+### 2.5 `api`
 
 **`DeliveriesResource`** (`/v1/deliveries`) — the product surface; product
 vocabulary only (client statuses, delivery ids). Endpoints:
