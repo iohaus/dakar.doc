@@ -333,6 +333,56 @@ EventBridge-driven Lambda module is the cloud leg).
 standalone form (no-action episodes). Traces carry candidates/choice/outcome
 as JSONB.
 
+### 1.3d Hardening (P6, 2026-07-18)
+
+**`desk.RequestDelivery` / `StateWrite.DeliveryInsert`** — delivery creation
+is now a journaled action carrying the *full initial record* (validated:
+REQUESTED, version 1, no negotiation/payment state), so replay is closed
+over the journal from the empty board. The product API executes it as
+`Actor.PRODUCT` with the `api_request` idempotency row as a companion write;
+a raced duplicate key exhausts as contention and resolves to the winner's
+delivery. Staff register trucks through `POST /v1/trucks` (`RegisterTruck`)
+— production fleets never enter by SQL.
+
+**`persistence.JournalPayloadCodec.fromJson`** — the total inverse of the
+payload writer: every action type reconstructed, unknown types and missing
+fields fail loudly. **`JournalStore.readAll`** orders by
+`(recorded_at, entry_id)` — local commit-order approximation, documented.
+
+**`persistence.ReplayAudit`** — scheduled (`dakar.audit.every`): replays the
+whole journal from empty and diffs against the live board. Deliveries
+compare fully; trucks compare on operational fields only (position and
+driver hours are telemetry, per the model's ownership split). Findings →
+ERROR log + `dakar.replay.divergence` counter; **any finding is
+severity-1**. Dev-only `Db.seedTruck` bypasses legitimately trip it — the
+audit tests use only journaled surfaces.
+
+**Observability** — Micrometer/Prometheus (`/q/metrics`):
+`dakar.actions.executed{action,actor}` / `.refused` / `.lost.race`,
+`dakar.replay.divergence`, dispute gauges (`dakar.disputes.open`,
+`.oldest.seconds`, refreshed by `DisputeMetrics` on
+`dakar.metrics.refresh-every`). `RequestCorrelationFilter` puts
+`X-Request-Id` on every response and `{requestId}` on every log line (MDC);
+inbound ids ≤ 64 chars are honored. Alarm sheet: runbook §5.
+
+**Follower reads** — staff `GET /v1/deliveries` (limit
+`dakar.staff.list-limit`) reads `AS OF SYSTEM TIME
+follower_read_timestamp()`: dashboard semantics, may lag seconds. Point
+reads stay fresh — read-your-writes is part of the product contract.
+
+**Access control (local leg)** — `ops/service-accounts.sql`: four
+least-privilege principals mirroring the cloud RBAC; the negotiator
+deliberately holds no `UPDATE` on `truck` (proved by `ServiceAccountsTest`).
+
+**Drills** — `ops/drills.sh` is the runnable failure-mode evidence:
+double-claim race, stale plan, below-floor refusal, companion rollback,
+policy outage, journal tamper, policy roll-forward/rollback.
+
+**CDK (modify-not-run)** — stack gains the `DeliveryArtifacts` bucket
+(block-public, SSE-S3, versioned, SSL-enforced, RETAIN), the
+`dakar/staff-access-key` secret, error/throttle alarms, and least-privilege
+grants + env wiring for the function. Compiled, never synthed.
+
 ### 1.4 `port` — `IdSource`
 
 `UUID next()`. The only sanctioned impurity reachable from the core:
