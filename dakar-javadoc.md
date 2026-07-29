@@ -383,6 +383,62 @@ policy outage, journal tamper, policy roll-forward/rollback.
 `dakar/staff-access-key` secret, error/throttle alarms, and least-privilege
 grants + env wiring for the function. Compiled, never synthed.
 
+### 1.3e Console & client surface (Phase U, 2026-07-19)
+
+**Read surface (dakar-quarkus)** — three staff-only follower reads (all
+clamped by `dakar.staff.list-limit` via `ListLimits.clamp`, `?limit=`
+never trusted):
+- `GET /v1/trucks` → `TruckView[]` (`FleetStore.listRecent`; position,
+  driver hours, assignment, `updated_at`).
+- `GET /v1/deliveries?view=board` → `BoardDeliveryView[]`
+  (`DeliveryStore.listBoard`; LEFT JOIN resolves the assigned truck in the
+  same follower-read pass; alias-qualified columns —
+  `FreightRows.DELIVERY_COLUMNS_ALIASED`). The un-parameterized list keeps
+  its thin shape for existing callers. Tons render
+  `stripTrailingZeros` (DECIMAL scale is storage detail, not contract).
+- `GET /v1/activity` → `ActivityView[]` (`ActivityStore`): journal actions
+  and decision traces merged newest-first; filters `actor` (validated
+  against the actor enum, 400 `INVALID_ACTOR`) and `deliveryId` (traces
+  join through `journal_entry_id`). Trace JSON rides in `detail`.
+Proven by `ConsoleReadSurfaceTest` (401 gates, row shapes, filters, caps,
+static serving).
+
+**Serving** — `dakar-quarkus/pom.xml` maps `../dakar-ui/public` into
+`META-INF/resources`: console at `/`, client surface at `/client/`, all
+same-origin (no CORS anywhere). The jar ships whatever `public/` holds —
+run `npm run build` in `dakar-ui` before packaging.
+
+**dakar-ui toolchain** — no bundler, no runtime npm packages: `tsc` emits
+browser-native ES modules (`.js`-suffixed relative imports) into
+`public/js`; npm is dev-only (`typescript`, `pixi.js` for typings,
+`@types/node` for tests). PixiJS 7.3.2 and the Source Sans 3 variable
+woff2 are vendored under `public/vendor/`. `npm test` compiles with
+`tsconfig.tests.json` and runs `node --test` over `dist/tests` —
+pure-logic suites only (layout clustering/stability, journey legs,
+pressure cues, geocode parsing/decisiveness).
+
+**Console app (src/)** — `main.ts` (hash router, 3s snapshot poller via
+`poll.ts` with visibility pause + 3→30s backoff, keyboard shortcuts,
+selection in the hash); `api.ts` (typed fetch → discriminated
+`Outcome<T>`: ok / apiError with code+requestId / network); `access.ts`
+(staff key in `sessionStorage` only); board: `layout.ts` (facility
+derivation by merge radius + stable radial-by-bearing arrangement),
+`progress.ts` (signal sequence → journey leg fractions; route pressure),
+`render.ts` (Pixi layers: edges/nodes/vehicles/labels, focus-and-context
+dimming, eased vehicle motion disabled under reduced motion),
+`mirror.ts` (visually-hidden focusable listing of every board entity —
+the accessible truth); `ui/` (panel with per-stage action groups,
+refusal-vs-error callouts per the no-optimistic-writes stance, feed with
+expandable traces, forms, six screens). Client app: `client/main.ts`
+(request/track/accept, per-form idempotency key reused across retries)
+and `client/geocode.ts` (Nominatim jsonv2, ≥1.1s spacing, session cache,
+importance-based decisiveness, OSM attribution, endpoint override via
+`<meta name="dakar-geocoder">`).
+
+**Known scope cuts** (deliberate, tracked in backlog): no cancel action
+(no HTTP endpoint exists), facility labels are coordinates (reverse
+geocoding later), advice range bar reads exact values as text beside it.
+
 ### 1.4 `port` — `IdSource`
 
 `UUID next()`. The only sanctioned impurity reachable from the core:
