@@ -1,6 +1,6 @@
 # Dakar Internals — The Core Library (`dakar`)
 
-**Status:** Normative v0.3 — this document *defines* the module; code conforms to it, not vice versa. *(v0.3: the **vocabulary firewall** (Law 4) — the CPN specification language of [model.md](model.md) never appears in code, schema, or code comments; all prescriptions below use the freight-operations vocabulary. The spec↔code mapping lives in model.md §12. v0.2 alignment history retained where noted.)*
+**Status:** Normative v0.3 — this document _defines_ the module; code conforms to it, not vice versa. _(v0.3: the **vocabulary firewall** (Law 4) — the CPN specification language of [model.md](model.md) never appears in code, schema, or code comments; all prescriptions below use the freight-operations vocabulary. The spec↔code mapping lives in model.md §12. v0.2 alignment history retained where noted.)_
 **Audience:** Dakar engineering
 **Companion:** [system_architecture.md](system_architecture.md) is the system-level authority; [model.md](model.md) is the formal authority; this document is the module-level authority for the domain library. Where documents disagree, fix the disagreement — neither silently wins.
 
@@ -17,9 +17,9 @@ audits, and product-status projections. It is the executable form of the
 formal net defined in model.md — expressed entirely in operational vocabulary
 (Law 4).
 
-It is the *functional core* of the hexagonal architecture (system_architecture.md §2).
+It is the _functional core_ of the hexagonal architecture (system_architecture.md §2).
 Everything else in the system — the Quarkus product API, the agent Lambdas, the
-CockroachDB adapter, the Bedrock adapter — is an *imperative shell* around this
+CockroachDB adapter, the Bedrock adapter — is an _imperative shell_ around this
 module.
 
 Two sentences govern every decision in this document:
@@ -31,14 +31,14 @@ Two sentences govern every decision in this document:
 
 ## 2. Module identity
 
-| Property | Value |
-|---|---|
-| Maven coordinates | `com.iohaus:dakar:1.0.0` |
-| Maven parent | `dakar-parent` (inherits toolchain; imports `dakar-bom`) |
-| Reactor | added to `<modules>` in the root `dakar-build-parent` aggregator |
-| Java | 25 end to end since 2026-07-13 (Quarkus 3.37.2 reads class-file 69; the earlier `--release 21` constraint is retired — backlog P0-1). Unnamed variables (`_`) and other 22–25 features are permitted again. Lambda-runtime packaging is a P2-7 deploy-time decision. |
-| Packaging | plain `jar` — **not** a Quarkus module, no `quarkus-maven-plugin` |
-| Root package | `com.iohaus.dakar` |
+| Property          | Value                                                                                                                                                                                                                                                                  |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Maven coordinates | `com.iohaus:dakar:1.0.0`                                                                                                                                                                                                                                               |
+| Maven parent      | `dakar-parent` (inherits toolchain; imports `dakar-bom`)                                                                                                                                                                                                               |
+| Reactor           | added to `<modules>` in the root `dakar-build-parent` aggregator                                                                                                                                                                                                       |
+| Java              | 25 end to end since 2026-07-13 (Quarkus 3.37.2 reads class-file 69; the earlier `--release 21` constraint is retired — backlog P0-1). Unnamed variables (`ign`) and other 22–25 features are permitted again. Lambda-runtime packaging is a P2-7 deploy-time decision. |
+| Packaging         | plain `jar` — **not** a Quarkus module, no `quarkus-maven-plugin`                                                                                                                                                                                                      |
+| Root package      | `com.iohaus.dakar`                                                                                                                                                                                                                                                     |
 
 **Consumers:** the `dakar-quarkus` Quarkus module (product API) and the agent Lambda
 modules depend on `dakar`. The `cdk` module MUST NOT depend on it.
@@ -80,14 +80,14 @@ nothing but the JDK on the classpath.
 Given the same inputs, every public function returns the same output, on every
 JVM, every time. Consequences:
 
-| Source of nondeterminism | Rule |
-|---|---|
-| Wall-clock time | `Instant.now()`, `System.currentTimeMillis()`, `System.nanoTime()` MUST NOT be called. Time enters as data: every evaluation receives `now` inside the `Snapshot` (§6). |
-| Randomness | `java.util.Random`, `SecureRandom`, `Math.random()` MUST NOT be used. The domain has no legitimate need for randomness. |
-| ID generation | `UUID.randomUUID()` MUST NOT be called. New IDs are supplied by the injected `IdSource` port (§8), making the impurity explicit and replayable. |
-| Iteration order | All collections exposed or iterated by domain logic are deterministically ordered (`SortedMap`/`SortedSet` keyed on comparable IDs, or `List` with documented order). `HashMap`/`HashSet` iteration MUST NOT influence any output, including candidate enumeration order. |
-| Floating point | Money is `BigDecimal` with fixed scale and rounding (§9). `double` is permitted only in `geo` distance math, which is pure and covered by golden tests. |
-| Locale / charset / timezone | Nothing locale-sensitive. All timestamps are `Instant` (UTC). String comparisons are `Comparator.naturalOrder()` on ASCII identifiers. |
+| Source of nondeterminism    | Rule                                                                                                                                                                                                                                                                      |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Wall-clock time             | `Instant.now()`, `System.currentTimeMillis()`, `System.nanoTime()` MUST NOT be called. Time enters as data: every evaluation receives `now` inside the `Snapshot` (§6).                                                                                                   |
+| Randomness                  | `java.util.Random`, `SecureRandom`, `Math.random()` MUST NOT be used. The domain has no legitimate need for randomness.                                                                                                                                                   |
+| ID generation               | `UUID.randomUUID()` MUST NOT be called. New IDs are supplied by the injected `IdSource` port (§8), making the impurity explicit and replayable.                                                                                                                           |
+| Iteration order             | All collections exposed or iterated by domain logic are deterministically ordered (`SortedMap`/`SortedSet` keyed on comparable IDs, or `List` with documented order). `HashMap`/`HashSet` iteration MUST NOT influence any output, including candidate enumeration order. |
+| Floating point              | Money is `BigDecimal` with fixed scale and rounding (§9). `double` is permitted only in `geo` distance math, which is pure and covered by golden tests.                                                                                                                   |
+| Locale / charset / timezone | Nothing locale-sensitive. All timestamps are `Instant` (UTC). String comparisons are `Comparator.naturalOrder()` on ASCII identifiers.                                                                                                                                    |
 
 Determinism is what makes the rest of the system cheap: serialization-failure
 retries are trivially safe (re-plan from a fresh snapshot is a pure call),
@@ -109,8 +109,8 @@ to the highest-privilege contributors. The `dakar` repository is not. Two
 consequences, both mechanical:
 
 1. **Spec vocabulary never appears in the repository.** The modeling
-   formalism's words — *token, place, marking, net, transition, firing, guard,
-   binding, arc, color, Petri, enabled, saga* — MUST NOT appear in package
+   formalism's words — _token, place, marking, net, transition, firing, guard,
+   binding, arc, color, Petri, enabled, saga_ — MUST NOT appear in package
    names, class/method/field names, schema identifiers, string constants,
    Javadoc, or code comments. Code speaks freight operations: trucks,
    deliveries, statuses, the dispatch board, actions, the journal, rules,
@@ -125,30 +125,30 @@ The naming standard this yields is exactly CLAUDE.md's domain-driven-clarity
 rule applied ruthlessly: names describe the business thing, never the
 formalism or pattern behind it.
 
-**The vocabulary map** (normative; the prose of *this* document may use either
+**The vocabulary map** (normative; the prose of _this_ document may use either
 column — it is a privileged document — but code uses only the right column):
 
-| Specification (model.md) | Code / schema |
-|---|---|
-| truck token | `Truck` |
-| delivery token | `Delivery` |
-| truck place | `TruckStatus` (column `status`) |
-| delivery place | `DeliveryStatus` (column `status`) |
-| marking | `DispatchBoard` |
-| the net / `DakarNet` | package `desk`, class `FreightDesk` |
-| transition | `Action` (sealed interface; concrete records were always domain-named) |
-| firing | executing an action; its record is a `JournalEntry` |
-| firing id | `JournalEntryId` |
-| event log | `operations_journal` table; package `journal` |
-| `fired_at` | column `occurred_at` |
-| binding | action arguments (event `payload`) |
-| guard | (business) rule: `RuleVerdict`, `RefusalReason` |
-| guard witness (R-BINDING) | `Evidence` |
-| enabled binding of ClaimTruck | `ClaimCandidate`; `claimCandidates(...)` |
-| firing plan / outcome / token write | `ActionPlan` / `ActionOutcome` / `StateWrite` |
-| replay fold | `Journal.replay` |
-| marking validator, invariant violation | `BoardAudit`, `ConsistencyViolation` |
-| saga (actor) | `COORDINATOR` (DB string `coordinator`) |
+| Specification (model.md)               | Code / schema                                                          |
+| -------------------------------------- | ---------------------------------------------------------------------- |
+| truck token                            | `Truck`                                                                |
+| delivery token                         | `Delivery`                                                             |
+| truck place                            | `TruckStatus` (column `status`)                                        |
+| delivery place                         | `DeliveryStatus` (column `status`)                                     |
+| marking                                | `DispatchBoard`                                                        |
+| the net / `DakarNet`                   | package `desk`, class `FreightDesk`                                    |
+| transition                             | `Action` (sealed interface; concrete records were always domain-named) |
+| firing                                 | executing an action; its record is a `JournalEntry`                    |
+| firing id                              | `JournalEntryId`                                                       |
+| event log                              | `operations_journal` table; package `journal`                          |
+| `fired_at`                             | column `occurred_at`                                                   |
+| binding                                | action arguments (event `payload`)                                     |
+| guard                                  | (business) rule: `RuleVerdict`, `RefusalReason`                        |
+| guard witness (R-BINDING)              | `Evidence`                                                             |
+| enabled binding of ClaimTruck          | `ClaimCandidate`; `claimCandidates(...)`                               |
+| firing plan / outcome / token write    | `ActionPlan` / `ActionOutcome` / `StateWrite`                          |
+| replay fold                            | `Journal.replay`                                                       |
+| marking validator, invariant violation | `BoardAudit`, `ConsistencyViolation`                                   |
+| saga (actor)                           | `COORDINATOR` (DB string `coordinator`)                                |
 
 ---
 
@@ -171,7 +171,7 @@ com.iohaus.dakar
 └── check/        Consistency audits (BoardAudit — the executable form of model.md INV-1…INV-5)
 ```
 
-Dependency direction *within* the module: `freight`, `money`, `geo` are leaves;
+Dependency direction _within_ the module: `freight`, `money`, `geo` are leaves;
 `desk` depends on them; `journal`, `projection`, `check`, `agent` depend on
 `desk`. No cycles (ArchUnit-enforced, §12).
 
@@ -220,7 +220,7 @@ public record Delivery(
     long version) { ... }
 ```
 
-`version` is carried *through* the domain but interpreted only by the shell
+`version` is carried _through_ the domain but interpreted only by the shell
 (it becomes the `WHERE version = ?` predicate in the CockroachDB adapter). The
 domain treats it as opaque and copies it into `ActionPlan` writes unchanged
 except for the `+1` on modified entities.
@@ -239,9 +239,9 @@ these constants; the adapter maps mechanically, adding nothing.
 
 The status enums live in `freight`, not `desk`: entities carry their status,
 and `freight` is a leaf package — placing the enums in `desk` would create a
-`freight → desk` cycle and break the §4 layering. *(Amended v0.2: `DISPUTED`
+`freight → desk` cycle and break the §4 layering. _(Amended v0.2: `DISPUTED`
 added; shipped P1-4 predates it — code catch-up in backlog P3-1. v0.3: renamed
-from the spec's vocabulary per Law 4.)*
+from the spec's vocabulary per Law 4.)_
 
 ### 5.3 DispatchBoard (`desk`)
 
@@ -257,7 +257,7 @@ public record DispatchBoard(
 }
 ```
 
-A `DispatchBoard` is a *value* — a point-in-time picture of (the relevant
+A `DispatchBoard` is a _value_ — a point-in-time picture of (the relevant
 slice of) the fleet and its work, loaded by the shell. The domain never
 observes state change; it observes one board and emits one plan.
 
@@ -266,7 +266,7 @@ observes state change; it observes one board and emits one plan.
 ## 6. The Snapshot: data in, decisions out
 
 The domain's unit of input is a `Snapshot` — everything an evaluation may
-consult, assembled by the shell *before* the domain is entered:
+consult, assembled by the shell _before_ the domain is entered:
 
 ```java
 public record Snapshot(
@@ -276,13 +276,13 @@ public record Snapshot(
     Instant now) {}
 ```
 
-*(v0.3.2: `policies` joined with P3-7. `PolicySet(pricing, quoteValidity,
+_(v0.3.2: `policies` joined with P3-7. `PolicySet(pricing, quoteValidity,
 paymentTerms)`; `PricingPolicy(floorBase, floorPerTonKm, ceilingMultiplier)`
 owns the floor/ceiling formulas. `Quote` and `ArriveDest` consequently carry
 no window arguments — the desk reads the snapshot's policies and journals the
 applied window as an Evidence witness (`appliedQuoteValidity` /
 `appliedPaymentTerms`), keeping replay closed over the journal per model.md
-R-BINDING.)*
+R-BINDING.)_
 
 **Routing is data, not a call.** External routing APIs are impure and slow, so
 route estimates do not enter the domain as a port that is called
@@ -331,19 +331,19 @@ public record Offload(TruckId truck, TruckStatus nextTruckStatus)     implements
 // (RegisterTruck/Decommission/Start-/CompleteMaintenance) shipped with P3-1.
 ```
 
-*(v0.3.1 decisions: policy-derived windows — quote validity, payment terms —
+_(v0.3.1 decisions: policy-derived windows — quote validity, payment terms —
 travel as action arguments until `PolicySet` lands in P3-7; `Offload`,
 `ReleaseTruck`, `AbortLoaded` carry the staff/coordinator choice of the
 truck's next status; journal-only `RecordDisruption` bumps the delivery
 version so concurrent stale plans are invalidated; staff-only actions refuse
-non-STAFF actors at the desk with `STAFF_AUTHORIZATION_REQUIRED`.)*
+non-STAFF actors at the desk with `STAFF_AUTHORIZATION_REQUIRED`.)_
 
 ### 7.2 Rules
 
 Every action has preconditions — the business rules of model.md §4, expressed
 as pure predicates over `(Action, Snapshot)` producing a verdict with
 machine-readable reasons — never a bare boolean, because the shell and the
-observability pipeline need *why*:
+observability pipeline need _why_:
 
 ```java
 public sealed interface RuleVerdict {
@@ -428,8 +428,8 @@ public sealed interface StateWrite {  // v0.3.1: typed, not stringly —
 ActionOutcome outcome = desk.plan(action, snapshot, actor, idSource);
 ```
 
-*(v0.3.1: `plan` takes the requesting `Actor` — the journal entry is fully
-formed by the desk, and the actor is part of the entry.)*
+_(v0.3.1: `plan` takes the requesting `Actor` — the journal entry is fully
+formed by the desk, and the actor is part of the entry.)_
 
 `plan(...)` re-evaluates the rules against the snapshot even if the caller
 already enumerated — **enumeration is advice; planning is the check**. The
@@ -464,11 +464,11 @@ container awareness, no defaults that do I/O.
 The port list is deliberately tiny and closed — a new port requires amending
 this document first:
 
-| Port | Package | Contract |
-|---|---|---|
-| `IdSource` | `port` | Supplies fresh `JournalEntryId`/`DeliveryId`… values. The only sanctioned impurity. Test/replay implementations are seeded and sequential. |
-| `DispatchPolicy` | `agent` | Chooses among enumerated `ClaimCandidate`s. LLM-backed in production. |
-| `NegotiationPolicy` | `agent` | Chooses an offer within an `OfferBand`, given retrieved episodic context. LLM-backed in production. |
+| Port                | Package | Contract                                                                                                                                   |
+| ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `IdSource`          | `port`  | Supplies fresh `JournalEntryId`/`DeliveryId`… values. The only sanctioned impurity. Test/replay implementations are seeded and sequential. |
+| `DispatchPolicy`    | `agent` | Chooses among enumerated `ClaimCandidate`s. LLM-backed in production.                                                                      |
+| `NegotiationPolicy` | `agent` | Chooses an offer within an `OfferBand`, given retrieved episodic context. LLM-backed in production.                                        |
 
 ```java
 public interface IdSource {
@@ -490,7 +490,7 @@ public interface NegotiationPolicy {
 
 `DispatchContext` / `NegotiationContext` are immutable records assembled by the
 shell (retrieved episodes, client profile, lane stats — arch §6.2–6.3). The
-domain defines their *shape*; the shell fills them. Note what is absent:
+domain defines their _shape_; the shell fills them. Note what is absent:
 prompts, model names, token budgets. Those are Bedrock-adapter concerns and
 MUST NOT leak into these types.
 
@@ -532,15 +532,15 @@ proposal. This changes nothing in this module:
 Laws 1–2 are untouched: all impurity — the conversation, the retrievals, the
 retries — lives in the shell.
 
-### 8.4 What is deliberately *not* a port
+### 8.4 What is deliberately _not_ a port
 
-| Not a port | Why |
-|---|---|
-| Routing | Data in the `Snapshot` (§6). No mid-computation calls. |
-| Clock | Data in the `Snapshot` (`now`). A clock port invites drift between two reads in one evaluation. |
+| Not a port               | Why                                                                                                                                                                         |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Routing                  | Data in the `Snapshot` (§6). No mid-computation calls.                                                                                                                      |
+| Clock                    | Data in the `Snapshot` (`now`). A clock port invites drift between two reads in one evaluation.                                                                             |
 | Persistence / repository | The domain never loads or saves. The shell loads `Snapshot`s and executes `ActionPlan`s. A repository interface in the domain would put I/O sequencing decisions inside it. |
-| Embeddings | The domain emits transcript text inside `NegotiationEpisodeDraft`; embedding is a shell concern (Bedrock) and the vector never enters the domain. |
-| Logging / metrics | The domain returns rich outcome types (`RefusalReason`, `ActionOutcome`); the shell logs them. |
+| Embeddings               | The domain emits transcript text inside `NegotiationEpisodeDraft`; embedding is a shell concern (Bedrock) and the vector never enters the domain.                           |
+| Logging / metrics        | The domain returns rich outcome types (`RefusalReason`, `ActionOutcome`); the shell logs them.                                                                              |
 
 ---
 
@@ -554,7 +554,7 @@ convention. Currency mismatches throw `IllegalArgumentException` at
 construction, never propagate.
 
 **Geo** (`geo`): `record GeoPoint(double latDeg, double lonDeg)` with a pure
-haversine `Kilometers distanceTo(GeoPoint other)`. This is an *estimator* used
+haversine `Kilometers distanceTo(GeoPoint other)`. This is an _estimator_ used
 in rules and annotations (driver-hours slack, repositioning cost hints); road
 distances come from the `RouteTable`. Golden tests pin exact outputs so JVM
 uniformity is verified, not assumed.
@@ -628,7 +628,7 @@ public final class StatusProjection {
 The projection consumes internal vocabulary and emits product vocabulary
 (arch §9's abstraction rules, enforced at the source). Law 4 already keeps
 spec words out of the internal vocabulary; this projection additionally keeps
-*internal operational* words (board, journal, action) out of anything a client
+_internal operational_ words (board, journal, action) out of anything a client
 sees.
 
 ---
@@ -675,7 +675,7 @@ noClasses()
 // projection, money, geo, check — and nothing else.
 ```
 
-(`java.io` is banned as a *dependency target* with a narrow allowance list for
+(`java.io` is banned as a _dependency target_ with a narrow allowance list for
 `Serializable`-free record plumbing if ever needed; the default is a hard no.)
 
 **3. Review conventions** not expressible in ArchUnit — raw `BigDecimal`
@@ -692,20 +692,20 @@ The purity dividend: **domain tests use no mocks of infrastructure, no
 Testcontainers, no Quarkus test harness.** Construct values, call functions,
 assert. The full suite runs in seconds.
 
-| Layer | Technique | What it pins |
-|---|---|---|
-| Rules | Example-based JUnit, table-driven from model.md §4 (docs-side mapping) | Each rule, satisfied and each refusal reason |
+| Layer                              | Technique                                                                                                                                  | What it pins                                                                                                                                                |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Rules                              | Example-based JUnit, table-driven from model.md §4 (docs-side mapping)                                                                     | Each rule, satisfied and each refusal reason                                                                                                                |
 | Consistency (model.md INV-1…INV-5) | **Property-based (jqwik)**: generate random legal action sequences from random initial boards; assert `BoardAudit` after every replay step | No reachable board violates a consistency property — including assignment injectivity (no double-booking). The executable verification of the formal claims |
-| Replay | Property-based: `replay(initial, journal)` equals step-by-step application; journal mutations (drop/reorder/duplicate) fail loudly | Law 2, MI-2 |
-| Enumeration determinism | Same snapshot twice → identical candidate lists (order included) | Law 2 |
-| Policy validation | Hostile fake policies (returns non-candidate, out-of-band offer, null) | §8.3 rejection paths |
-| Projection | Exhaustive over `DeliveryStatus × TruckStatus` | Total mapping, no internal vocabulary leaks |
-| Geo/Money | Golden tests with exact expected values | Cross-JVM determinism |
-| Architecture | ArchUnit (§12) | Laws 1–4 |
+| Replay                             | Property-based: `replay(initial, journal)` equals step-by-step application; journal mutations (drop/reorder/duplicate) fail loudly         | Law 2, MI-2                                                                                                                                                 |
+| Enumeration determinism            | Same snapshot twice → identical candidate lists (order included)                                                                           | Law 2                                                                                                                                                       |
+| Policy validation                  | Hostile fake policies (returns non-candidate, out-of-band offer, null)                                                                     | §8.3 rejection paths                                                                                                                                        |
+| Projection                         | Exhaustive over `DeliveryStatus × TruckStatus`                                                                                             | Total mapping, no internal vocabulary leaks                                                                                                                 |
+| Geo/Money                          | Golden tests with exact expected values                                                                                                    | Cross-JVM determinism                                                                                                                                       |
+| Architecture                       | ArchUnit (§12)                                                                                                                             | Laws 1–4                                                                                                                                                    |
 
 The property-based consistency suite is the load-bearing one: it is the shipped
 verification of the formal claims (model.md §11), executed on every build
-against the *actual* Java implementation. The offline TLA+ spec of the
+against the _actual_ Java implementation. The offline TLA+ spec of the
 contended-claim protocol is roadmap (backlog, Post-MVP), not a present-tense
 dependency.
 
@@ -721,14 +721,14 @@ this module, however convenient it looks in the moment:
 - Prompts, model IDs, token budgets, tool definitions (Bedrock adapter)
 - Embedding vectors and vector-search queries (memory adapter)
 - HTTP anything; routing-API clients and their caching (routing adapter)
-- Logging, metrics, tracing (shell observes domain *outcomes*)
+- Logging, metrics, tracing (shell observes domain _outcomes_)
 - Configuration reading of any kind
 - Scheduling, EventBridge shapes, Lambda handlers (agent shells)
 - CDI/`@ApplicationScoped`/`@Inject` (wiring lives in `dakar-quarkus`'s producers)
 - **Specification vocabulary or references to `dakar.doc` (Law 4)**
 
-The test for a proposed addition: *could this line ever behave differently on
-two machines, two runs, or two regions?* If yes, it is shell.
+The test for a proposed addition: _could this line ever behave differently on
+two machines, two runs, or two regions?_ If yes, it is shell.
 
 ---
 
@@ -738,7 +738,7 @@ two machines, two runs, or two regions?* If yes, it is shell.
   a domain version bump, a model.md + architecture-doc update, and a
   replay-compatibility review (§10) — in that order.
 - **Rule-threshold changes** (a new floor-price formula, revised driver-hours
-  margin) are *not* code changes; they are `PolicySet` data (procedural
+  margin) are _not_ code changes; they are `PolicySet` data (procedural
   memory, arch §6.3), versioned and rolled back in the database. The domain
   evaluates whatever active policy version the `Snapshot` carries.
 - **New agent policies** implement existing port interfaces in the shell; the
