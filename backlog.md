@@ -12,6 +12,19 @@
 > recorded at P2-2; the v23.2.31 pin served Phases 2–3. Dev volume recreated:
 > 23.2 data cannot cross majors).
 
+> **Reconciliation pass, 2026-08-09.** Session-based staff auth (`AuthResource`,
+> `SessionStore`, cookie login/logout) was removed — staff auth is the
+> `X-Staff-Access-Key` header only (`StaffAccessFilter`), which is now correctly
+> re-registered as an active JAX-RS provider (it had been left disabled
+> mid-edit, silently leaving every `@StaffOnly` endpoint unprotected — fixed as
+> part of this pass, not a design change). `SsmConfigSource` (AWS SSM Parameter
+> Store resolution) was removed as dead code — never wired to any real secret
+> flow; CDK injects secrets as plain Lambda env vars, not SSM. See Phase U's
+> supersession note for the `dakar-ui`→`dakar-console` + curl-only-clients
+> pivot. `aws.md` and `demo-commentary.md` corrected to match: Java 21 (not 25),
+> Claude 3 Haiku (not 3.5 Sonnet, which was never the configured model), no
+> `/login`/`/logout` routes, no web visualizer.
+
 ---
 
 ## 0. Conventions
@@ -41,7 +54,7 @@ Goal: the laws of `dakar_internals.md` are mechanically enforced before the firs
 
 | ID | State | Task | Size | Depends |
 |---|---|---|---|---|
-| P0-1 | ☑ | **Toolchain & bytecode decision.** 2026-07-12 resolution: JDK 25 toolchain with `--release 21` bytecode (Quarkus 3.20.1 rejected class-file 69; `java21` Lambda cap). **Superseded 2026-07-13:** the platform was upgraded to **Quarkus 3.37.2** (reads class-file 69) and the reactor now targets **Java 25** end to end (root `release=25`); Testcontainers moved to 2.x (`testcontainers-cockroachdb`), `quarkus-junit5`→`quarkus-junit`. The Lambda-runtime consequence returns to the P2-7 deploy decision (container image or 21-target deployable) — deploys remain blocked anyway. | S | — |
+| P0-1 | ☑ | **Toolchain & bytecode decision.** 2026-07-12 resolution: JDK 25 toolchain with `--release 21` bytecode (Quarkus 3.20.1 rejected class-file 69; `java21` Lambda cap). **Superseded 2026-07-13:** the platform was upgraded to **Quarkus 3.37.2** (reads class-file 69) and the reactor targeted **Java 25** end to end (root `release=25`); Testcontainers moved to 2.x (`testcontainers-cockroachdb`), `quarkus-junit5`→`quarkus-junit`. **Superseded again 2026-08-09:** reverted to **Java 21** end to end (root `release=21`) — the CDK stack (built out under the modify-not-execute leg, see P2-7) targets `Runtime.JAVA_21` for all four Lambdas, so the reactor now matches its actual deploy target instead of carrying a mismatch. The maven wrapper was also dropped in favor of a global `mvn`; `verify.sh` is unchanged as the merge gate. | S | — |
 | P0-2 | ☑ | **`dakar` POM: dependency policy.** Empty compile scope (JDK + optionally `org.jspecify`); test scope JUnit 5, jqwik, ArchUnit, AssertJ. Maven Enforcer `<bannedDependencies>` failing the build on any compile-scope dependency (internals §2.1, §12). | S | — |
 | P0-3 | ☑ | **ArchUnit law suite.** Purity (no infra packages), determinism (no `currentTimeMillis`/`nanoTime`/`randomUUID`/`Random`/`java.time now()`), closed package set, intra-module layering per internals §4 (future packages guarded via `allowEmptyShould`). Runs in `mvn test`. | M | P0-2 |
 | P0-4 | ☑ | **Quality gate script.** 2026-07-12: `verify.sh` at repo root runs `./mvnw verify` across the reactor (`cdk` builds standalone and is not in the reactor; its deploys stay blocked). This is the merge gate until real CI exists; add a follow-up task when a CI system is chosen. | S | P0-1 |
@@ -146,6 +159,15 @@ Goal: arch §11 made real; remaining challenge tooling wired. *(Challenge tool #
 
 ## Phase U — User interface (operations console & client surface)
 
+> **Superseded 2026-08-09.** The web console this phase describes (`dakar-ui`,
+> served same-origin from Quarkus, Pixi board) was replaced by **`dakar-console`**
+> — a native PyQt6/QML desktop app for staff — and the planned client web
+> surface / Telegram bot were dropped: **shippers call the API directly with
+> `curl`**, no client app. `dakar-ui` no longer exists in the tree. Rows below
+> are kept as a record of what was built and later replaced, not current state.
+> Current staff/client surfaces: [dakar-console/README.md](../../dakar/dakar-console/README.md),
+> [dakar-quarkus/README.md](../../dakar/dakar-quarkus/README.md).
+
 | ID | State | Task | Size | Depends |
 |---|---|---|---|---|
 | U-1 | ☑ | **Design authority.** 2026-07-18: `ui-design.md` shipped — activity-graph board (topological, not geographic), Nominatim geographic model (region-agnostic), full flow/screen/component/state specs, validated stage ramps + reserved health palette, repo-safe vocabulary (§16). High-fidelity previews in `dakar-ui/design/` (`palette.css`, styleguide/console/negotiation/client) — firewall-swept. | M | P6 |
@@ -187,7 +209,7 @@ Not scheduled; listed so scope pressure has somewhere to point.
 
 | Risk | Watched at | Mitigation |
 |---|---|---|
-| Java 25 Lambda runtime unavailable | P0-1 | Container-image Lambda or pin deployables to 21; domain stays 25-compatible either way |
+| ~~Java 25 Lambda runtime unavailable~~ | P0-1 | **Resolved 2026-08-09** by reverting the whole reactor to Java 21 (matches `Runtime.JAVA_21` in CDK); no longer a live risk. |
 | CockroachDB cluster version lacks vector indexing | P2-2 | Verify ≥ v25.2 *before* provisioning; it's cheap to check and expensive to re-provision |
 | `40001` retry storms under agent fan-out | P2-5, P6-3 | Bounded retries + jittered backoff in the executor; retry-rate metric with alarm |
 | LLM structured-output flakiness | P5-2 | Reject-don't-repair tool-call handling; §8.3 validation; violation-rate metric as model-health alarm |

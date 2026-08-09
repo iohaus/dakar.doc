@@ -28,7 +28,7 @@ AI agents in production are moving from conversational experimentations to real-
    - **CockroachDB Cloud Managed MCP Server**: Direct natural-language inspection and live operational auditing by Claude/Cursor agents via `https://cockroachlabs.cloud/mcp`.
    - **Agent-Ready `ccloud` CLI**: Programmatic cluster topology management, point-in-time recovery, and RBAC service account configuration.
    - **CockroachDB Open-Source Agent Skills**: Custom skills encoding serializable retry patterns and query optimizations.
-   - **AWS Native Infrastructure**: **Amazon Bedrock** (Titan Embeddings v2 for vectorization + Claude 3.5 Sonnet / Converse API for multi-turn agent deliberation), **AWS Lambda** serverless execution, and **CockroachDB Cloud on AWS**.
+   - **AWS Native Infrastructure**: **Amazon Bedrock** (Titan Embeddings v2 for vectorization + Claude 3 Haiku / Converse API for multi-turn agent deliberation), **AWS Lambda** serverless execution, and **CockroachDB Cloud on AWS**.
 
 ---
 
@@ -186,7 +186,7 @@ sequenceDiagram
     actor Client as Shipper
     participant Agent as Negotiator Agent (AWS Lambda / Bedrock)
     participant VectorDB as CockroachDB (negotiation_episode Vector Index)
-    participant Bedrock as Amazon Bedrock (Titan Embeddings v2 + Claude 3.5)
+    participant Bedrock as Amazon Bedrock (Titan Embeddings v2 + Claude 3 Haiku)
 
     Client->>Agent: Request Quote (Delivery #882, Freight: 20t, Lane: Dakar->Thies)
     Agent->>Bedrock: Generate Query Embedding ("20t general cargo Dakar to Thies")
@@ -290,7 +290,7 @@ This mathematical transformation compresses long-distance regional outliers (e.g
 - [x] **CockroachDB Cloud Managed MCP Server**: Endpoints configured for natural language workspace auditing via Claude/Cursor (`https://cockroachlabs.cloud/mcp`).
 - [x] **ccloud CLI**: Programmatic cluster topology, automated backups, and service account RBAC management.
 - [x] **CockroachDB Agent Skills Repo**: Encoded custom agent skills for `SERIALIZABLE` transaction retry handling and query design.
-- [x] **AWS Bedrock**: Foundation model integration (Titan Embeddings v2 + Claude 3.5 Sonnet Converse API).
+- [x] **AWS Bedrock**: Foundation model integration (Titan Embeddings v2 + Claude 3 Haiku Converse API).
 - [x] **AWS Lambda / Quarkus**: Serverless execution shell running stateless agent decision episodes.
 
 ---

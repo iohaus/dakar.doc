@@ -27,15 +27,15 @@ Our active AWS footprint consists exclusively of three serverless services:
 
 ```mermaid
 flowchart TD
-    subgraph External_Clients ["Clients & Visualizer"]
-        C1[Web Visualizer SPA / Console]
-        C2[curl / Operational Script]
+    subgraph External_Clients ["Clients & Operators"]
+        C1[dakar-console - native PyQt6/QML operator desktop app]
+        C2[curl / Operational Script - shipper requests, no client app]
     end
 
     subgraph AWS ["AWS Serverless Footprint (3 Core Services)"]
         APIGW[Amazon API Gateway - HTTP API v2]
         LAMBDA[AWS Lambda - Quarkus Runtime]
-        BEDROCK[Amazon Bedrock - Titan & Claude 3.5]
+        BEDROCK[Amazon Bedrock - Titan Embeddings + Claude 3 Haiku]
     end
 
     subgraph Database ["External Managed Database"]
@@ -56,9 +56,9 @@ flowchart TD
 
 | AWS Component | Service Type | Role in Active System | Strong Justification for Demo |
 |---|---|---|---|
-| **Amazon API Gateway** | HTTP API (v2) | Single entry point & HTTP router | **Zero server management, instant HTTP ingress**. Automatically routes `/v1/*`, `/login`, and `/logout` traffic directly to Lambda with sub-10ms entry latency. Eliminates the need for ALBs or NGINX proxies. |
-| **AWS Lambda** | Serverless Compute | Executes Quarkus App & Agent logic | **100% Stateless execution**. Houses the complete Java 25 Quarkus application runtime (`1024MB`). Scales to zero when idle, matching Dakar's core rule that **all persistent state lives in CockroachDB Cloud**. |
-| **Amazon Bedrock** | Managed AI Engine | Agent deliberation & vector embeddings | **Native AI capabilities without managing GPUs**. Titan Embeddings v2 generates vector embeddings for CockroachDB pgvector RAG; Claude 3.5 Sonnet drives autonomous quote negotiations via Converse API. |
+| **Amazon API Gateway** | HTTP API (v2) | Single entry point & HTTP router | **Zero server management, instant HTTP ingress**. Automatically routes all `/v1/*` traffic directly to Lambda with sub-10ms entry latency. Eliminates the need for ALBs or NGINX proxies. |
+| **AWS Lambda** | Serverless Compute | Executes Quarkus App & Agent logic | **100% Stateless execution**. Houses the complete Java 21 Quarkus application runtime (`1024MB` for the HTTP/negotiator/dispatcher functions, `512MB` for the coordinator sweep). Scales to zero when idle, matching Dakar's core rule that **all persistent state lives in CockroachDB Cloud**. |
+| **Amazon Bedrock** | Managed AI Engine | Agent deliberation & vector embeddings | **Native AI capabilities without managing GPUs**. Titan Embeddings v2 generates vector embeddings for CockroachDB pgvector RAG; Claude 3 Haiku drives autonomous dispatch/negotiation deliberation via Converse tool use. |
 
 ---
 
@@ -67,13 +67,13 @@ flowchart TD
 ### Flow 1: Client Ingress & Operational API Execution
 
 ```
-[Client / Visualizer] ──(HTTPS)──► [API Gateway (HTTP API v2)] ──► [AWS Lambda (Quarkus)]
+[Shipper (curl) / dakar-console operator app] ──(HTTPS)──► [API Gateway (HTTP API v2)] ──► [AWS Lambda (Quarkus)]
 ```
 
 - **Access Pattern**:
-  1. The client or web visualizer sends a REST request (e.g. `POST /v1/deliveries` or `POST /login`).
+  1. A shipper calls the API directly with `curl` (no client app), or an operator's `dakar-console` desktop app calls it on their behalf (e.g. `POST /v1/deliveries`, `POST /v1/deliveries/{id}/assign`).
   2. **API Gateway** proxies the payload directly to the **AWS Lambda** function.
-  3. **Lambda** handles form authentication, geocoding, and issues a `SERIALIZABLE` SQL transaction to **CockroachDB Cloud**.
+  3. **Lambda** checks the `X-Staff-Access-Key` header on staff-only endpoints, geocodes addresses (Nominatim) on delivery creation, and issues a `SERIALIZABLE` SQL transaction to **CockroachDB Cloud**.
   4. Response is returned back through API Gateway to the client in real-time.
 
 ### Flow 2: Agent Perception & Bedrock RAG Deliberation
@@ -81,7 +81,7 @@ flowchart TD
 ```
 [AWS Lambda] ──(Vector Query)──► [CockroachDB Cloud (pgvector)]
      │
-     ├──(Historical RAG Context)──► [Amazon Bedrock (Claude 3.5 / Titan)]
+     ├──(Historical RAG Context)──► [Amazon Bedrock (Claude 3 Haiku / Titan)]
      │                                     │
      └◄──────(Calculated Offer)────────────┘
 ```
@@ -89,7 +89,7 @@ flowchart TD
 - **Access Pattern**:
   1. When a delivery quote is requested, **Lambda** invokes **Amazon Bedrock (Titan Embeddings v2)** to generate a 1024-dimensional vector embedding of the lane request.
   2. **Lambda** queries **CockroachDB Cloud** using pgvector cosine distance (`negotiation_episode`) to fetch the 5 most relevant past negotiation outcomes.
-  3. **Lambda** sends the historical RAG context and policy constraints to **Amazon Bedrock (Claude 3.5 Sonnet)** via the Converse API.
+  3. **Lambda** sends the historical RAG context and policy constraints to **Amazon Bedrock (Claude 3 Haiku)** via the Converse API.
   4. Bedrock returns the calculated offer and rationale text, which Lambda writes to `decision_trace` in CockroachDB Cloud and returns to the client.
 
 ### Flow 3: Direct TLS Database Connection to CockroachDB Cloud
