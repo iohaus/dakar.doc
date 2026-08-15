@@ -2,7 +2,7 @@
 
 **Status:** v1.0 (P6-2) — the query set and alarm sheet for operating Dakar
 **Audience:** operators with database read access; privileged doc (Law 4 applies — none of this vocabulary reaches the repo or clients)
-**Surfaces:** locally, `cockroach sql` against `ops/docker-compose.yml` (console on `:8090`); in the cloud, the **read-only, audited MCP Server** configured from the Cloud Console (⛔ until cloud work is authorized). Operators never write; every mutation goes through the desk.
+**Surfaces:** `cockroach sql --certs-dir=ops/certs` against `ops/docker-compose.yml` (secure mode; console on `:8090`, now HTTPS), or the same queries through the **self-hosted CockroachDB MCP Server** (cert-authenticated as `mcp_operator`, read-only, wired into Claude Code via `.mcp.json` — see `ops/service-accounts.sql`). The CockroachDB Cloud-managed MCP variant stays ⛔ — cluster disabled, no timeline. Operators never write; every mutation goes through the desk.
 
 ---
 

@@ -149,8 +149,8 @@ sees agents, sagas, embeddings, or transitions.
 │                              │   policies & guardrails (procedural)   │
 ├──────────────────────────────┴──────────────────────────────────────┤
 │  OPERATOR SURFACE (internal only)                                    │
-│   CockroachDB MCP Server (read-only introspection, audited)          │
-│   ccloud CLI (provisioning, per-agent RBAC) wired into CDK/CI        │
+│   CockroachDB MCP Server (self-hosted, read-only, cert-authenticated) │
+│   ccloud CLI (roadmap — needs a CockroachDB Cloud cluster)           │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -931,12 +931,16 @@ Quarkus 3.20.x, AWS CDK deploying Quarkus apps as Lambdas via `FUNCTION_ASSET`.
   disruption signals), Amazon S3 (proof-of-delivery, weighbridge tickets,
   contracts). This satisfies the "at least one AWS service" requirement several
   times over.
-- **CockroachDB tools used (≥2 required):** (1) **Distributed vector indexing**
-  — load-bearing episodic memory, queried by the agents' own perception tools;
-  (2) **MCP Server** — read-only, audited operator introspection of live
-  marking, decision traces, and saga state, and the dev-loop surface;
-  (3) **ccloud CLI** — wired into CDK/CI to provision the cluster and manage
-  per-agent service accounts and RBAC.
+- **CockroachDB tools used (≥2 required, satisfied):** (1) **Distributed vector
+  indexing** — load-bearing episodic memory, queried by the agents' own
+  perception tools; (2) **MCP Server** — self-hosted
+  (`cockroachdb/cockroachdb-mcp-server`), cert-authenticated read-only
+  operator introspection of live marking, decision traces, and lane/client
+  memory (§11's `mcp_operator` principal), and the dev-loop surface.
+  **ccloud CLI** (provisioning the cluster and per-agent RBAC from CDK/CI) is
+  roadmap — it needs a CockroachDB Cloud cluster, currently disabled
+  (Request Unit limit, no timeline); not required once two tools are already
+  satisfied.
 
 ---
 
@@ -954,7 +958,7 @@ tool inventory (§8.2) — capability and permission are the same list:
 | Saga driver | `UPDATE` for physical transitions; `INSERT` on firings/traces |
 | Product API | `INSERT` Requested tokens; `SELECT` on marking projection (follower reads) |
 | Staff console | `UPDATE` for 👤 transitions (`ReleaseTruck`, `SettleDispute`, `WriteOff`, `TransferCargo`, `AbortLoaded`) + approvals |
-| Operators (MCP) | **read-only**, audited |
+| Operators (MCP) | `SELECT`-only, cert-authenticated as `mcp_operator` (no password), scoped to exactly `truck, delivery, operations_journal, decision_trace, negotiation_episode, client_profile, lane_stat` — self-hosted CockroachDB MCP Server, `ops/service-accounts.sql` |
 
 **Resilience.** CockroachDB multi-region with survivability configured so the
 memory tolerates node and zone failure with zero data loss and no maintenance

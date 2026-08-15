@@ -3,7 +3,7 @@
 **Title:** Ultra-Minimal Production & Demo Infrastructure Architecture on AWS  
 **Status:** Normative v1.0 — Demo Infrastructure Specification  
 **Audience:** Dakar engineering, Stakeholders, Challenge Reviewers  
-**Companions:** [system_architecture.md](system_architecture.md) (system authority), [demo-commentary.md](demo-commentary.md) (demo script)
+**Companions:** [system_architecture.md](system_architecture.md) (system authority), [demo_script.md](demo_script.md) (demo script)
 
 ---
 
